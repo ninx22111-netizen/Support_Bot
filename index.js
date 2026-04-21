@@ -80,6 +80,28 @@ const COLORS = {
 };
 
 // ============================================
+// 🔥 RAW GATEWAY DEBUG — catches ALL events before discord.js processes them
+// ============================================
+client.on('raw', (packet) => {
+    // Only log message-related events to avoid spam
+    if (packet.t === 'MESSAGE_CREATE') {
+        const d = packet.d;
+        const isDM = !d.guild_id;
+        console.log(`[RAW GATEWAY] MESSAGE_CREATE | Author: ${d.author?.username || 'unknown'} | IsDM: ${isDM} | GuildID: ${d.guild_id || 'NONE (DM)'} | Content: "${(d.content || '').substring(0, 30)}"`);
+    }
+    if (packet.t === 'TYPING_START') {
+        const d = packet.d;
+        const isDM = !d.guild_id;
+        console.log(`[RAW GATEWAY] TYPING_START | UserID: ${d.user_id} | IsDM: ${isDM}`);
+    }
+});
+
+// Log warnings from discord.js
+client.on('warn', (info) => {
+    console.log(`[WARN] ${info}`);
+});
+
+// ============================================
 // BOT READY
 // ============================================
 client.once('ready', async () => {
@@ -87,7 +109,10 @@ client.once('ready', async () => {
     console.log(`📋  Guild: ${CONFIG.guildId}`);
     console.log(`👮  Staff Roles: ${CONFIG.staffRoleIds.join(', ')}`);
     console.log(`📁  Ticket Category: ${CONFIG.ticketCategoryId || 'None (top of server)'}`);
-    console.log(`📝  Log Channel: ${CONFIG.logChannelId || 'None'}\n`);
+    console.log(`📝  Log Channel: ${CONFIG.logChannelId || 'None'}`);
+    console.log(`🔌  WebSocket Status: ${client.ws.status}`);
+    console.log(`🏠  Guilds cached: ${client.guilds.cache.size}`);
+    console.log(`⏱️  Ping: ${client.ws.ping}ms\n`);
 
     client.user.setPresence({
         activities: [{ name: 'DM me for support!', type: 3 }], // "Watching DM me for support!"
@@ -97,6 +122,7 @@ client.once('ready', async () => {
     // Rebuild ticket maps from existing channels on restart
     await rebuildTicketCache();
 });
+
 
 // ============================================
 // REBUILD TICKET CACHE ON RESTART
