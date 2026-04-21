@@ -428,17 +428,6 @@ async function forwardUserMessage(message) {
         const displayName = message.author.globalName || message.author.username;
         const finalContent = message.content || message.cleanContent || "*Text content hidden or empty*";
 
-        // RED embed for Staff's screen
-        const staffScreenEmbed = new EmbedBuilder()
-            .setAuthor({
-                name: displayName,
-                iconURL: message.author.displayAvatarURL()
-            })
-            .setDescription(finalContent)
-            .setColor(COLORS.CLOSE) // Red
-            .setFooter({ text: 'Member Message' })
-            .setTimestamp();
-
         // Handle attachments
         const files = [];
         if (message.attachments.size > 0) {
@@ -453,7 +442,7 @@ async function forwardUserMessage(message) {
                 name: displayName,
                 iconURL: message.author.displayAvatarURL()
             })
-            .setDescription(message.content || '*No text content*')
+            .setDescription(finalContent)
             .setColor(COLORS.CLOSE) // Red
             .setFooter({ text: 'Member Message' })
             .setTimestamp();
