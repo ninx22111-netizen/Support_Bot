@@ -222,6 +222,13 @@ async function handleDM(message) {
 
     const userId = message.author.id;
 
+    // ── !debug Command (Find where the ticket is) ────────
+    if (message.content.toLowerCase() === '!debug') {
+        const ticket = activeTickets.get(userId);
+        if (!ticket) return message.reply("🔍 You don't have an active ticket record in my memory.");
+        return message.reply(`🔍 **Debug Info:**\nServer ID: \`${ticket.guildId}\`\nChannel ID: \`${ticket.channelId}\`\n\n*If you can't see this channel, the bot might be lacking 'Manage Permissions' in that server!*`);
+    }
+
     // If user already has an active ticket, forward the message
     if (activeTickets.has(userId)) {
         return forwardUserMessage(message);
