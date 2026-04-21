@@ -222,12 +222,26 @@ async function handleDM(message) {
 
     const userId = message.author.id;
 
+    // ── !reset Command (Clear own ghost ticket) ─────────
+    if (message.content.toLowerCase() === '!reset') {
+        if (activeTickets.has(userId)) {
+            const ticket = activeTickets.get(userId);
+            activeTickets.delete(userId);
+            channelToUser.delete(ticket.channelId);
+            pendingPrompts.delete(userId);
+            return message.reply("🔄 **Ticket Cache Reset:** Your session has been wiped. You can now open a new ticket.");
+        }
+        return message.reply("🔍 No active ticket found to reset.");
+    }
+
     // ── !debug Command (Find where the ticket is) ────────
     if (message.content.toLowerCase() === '!debug') {
         const ticket = activeTickets.get(userId);
         if (!ticket) return message.reply("🔍 You don't have an active ticket record in my memory.");
         return message.reply(`🔍 **Debug Info:**\nServer ID: \`${ticket.guildId}\`\nChannel ID: \`${ticket.channelId}\`\n\n*If you can't see this channel, the bot might be lacking 'Manage Permissions' in that server!*`);
     }
+
+    // ── !debug Command (Find where the ticket is) ────────
 
     // If user already has an active ticket, forward the message
     if (activeTickets.has(userId)) {
@@ -652,6 +666,22 @@ async function handleGuildMessage(message) {
             return message.reply('❌ Only staff can generate transcripts.').catch(() => {});
         }
         return generateTranscript(message.channel, message.author);
+    }
+
+    // ── !wipe Command (Staff clears a user) ─────────────
+    if (message.content.toLowerCase().startsWith('!wipe')) {
+        if (!isUserStaff(message.member, message.guild)) return;
+        
+        const target = message.mentions.users.first();
+        if (!target) return message.reply("❌ Usage: `!wipe @User`").catch(() => {});
+
+        const ticket = activeTickets.get(target.id);
+        if (ticket) {
+            activeTickets.delete(target.id);
+            channelToUser.delete(ticket.channelId);
+            return message.reply(`✅ Wiped ticket cache for **${target.username}**.`).catch(() => {});
+        }
+        return message.reply(`🔍 No active ticket found for **${target.username}**.`).catch(() => {});
     }
 
     // ── Ignore unrecognized commands (don't forward to user) ──
