@@ -315,8 +315,8 @@ client.on('interactionCreate', async (interaction) => {
             const channels = await guild.channels.fetch();
             
             // Auto-detect Category and Log channel by NAME
-            const category = channels.find(c => c.type === ChannelType.GuildCategory && c.name.toLowerCase() === 'tickets');
-            const logChannel = channels.find(c => c.type === ChannelType.GuildText && c.name.toLowerCase() === 'modmail-logs');
+            const category = channels.find(c => c.type === ChannelType.GuildCategory && (c.name.toLowerCase() === 'tickets' || c.name.toLowerCase() === 'support'));
+            const logChannel = channels.find(c => c.type === ChannelType.GuildText && (c.name.toLowerCase() === 'ticket-logs' || c.name.toLowerCase() === 'modmail-logs'));
 
             const username = interaction.user.username.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
 
