@@ -1,0 +1,14 @@
+{
+  "name": "122-team-modmail",
+  "version": "1.0.0",
+  "description": "122 Team Support Bot — DM-based modmail ticket system",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.16.3",
+    "dotenv": "^16.4.7",
+    "express": "^5.2.1"
+  }
+}
