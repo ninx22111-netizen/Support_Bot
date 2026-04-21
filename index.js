@@ -40,7 +40,9 @@ const client = new Client({
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.DirectMessages,
         GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildMembers
+        GatewayIntentBits.GuildMembers,
+        GatewayIntentBits.DirectMessageTyping,
+        GatewayIntentBits.GuildMessageTyping
     ],
     partials: [
         Partials.Channel, // Required for DM events
@@ -126,6 +128,13 @@ async function rebuildTicketCache() {
         console.error('⚠️  Could not rebuild ticket cache:', err.message);
     }
 }
+
+// ============================================
+// HANDLE DEBUG TYPING (Diagnosing DM drops)
+// ============================================
+client.on('typingStart', (typing) => {
+    console.log(`[DEBUG TYPING] ${typing.user?.username || 'Someone'} is typing in a ${typing.channel?.type === ChannelType.DM ? 'DM' : 'Server Channel'}`);
+});
 
 // ============================================
 // HANDLE DIRECT MESSAGES
