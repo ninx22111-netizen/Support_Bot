@@ -398,18 +398,21 @@ client.on('interactionCreate', async (interaction) => {
                 }
             ];
 
-            // Add all staff role permissions
+            // Add all staff role permissions (Global staff roles from .env)
             CONFIG.staffRoleIds.forEach(roleId => {
-                permissionOverwrites.push({
-                    id: roleId,
-                    allow: [
-                        PermissionFlagsBits.ViewChannel,
-                        PermissionFlagsBits.SendMessages,
-                        PermissionFlagsBits.EmbedLinks,
-                        PermissionFlagsBits.AttachFiles,
-                        PermissionFlagsBits.ReadMessageHistory
-                    ]
-                });
+                // ONLY add if the role actually exists in THIS specific server
+                if (guild.roles.cache.has(roleId)) {
+                    permissionOverwrites.push({
+                        id: roleId,
+                        allow: [
+                            PermissionFlagsBits.ViewChannel,
+                            PermissionFlagsBits.SendMessages,
+                            PermissionFlagsBits.EmbedLinks,
+                            PermissionFlagsBits.AttachFiles,
+                            PermissionFlagsBits.ReadMessageHistory
+                        ]
+                    });
+                }
             });
 
             // Create the ticket channel
