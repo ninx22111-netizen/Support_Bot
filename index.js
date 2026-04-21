@@ -546,6 +546,11 @@ async function handleGuildMessage(message) {
         // Replace staff's raw message with the Green embed
         await message.channel.send({ embeds: [staffScreenEmbed], files });
         await message.delete().catch(() => {});
+
+    } catch (err) {
+        console.error('Failed to relay staff message:', err.message);
+        await message.reply('⚠️ Could not deliver message to the user. They may have DMs disabled.').catch(() => {});
+    }
 }
 
 // ============================================
