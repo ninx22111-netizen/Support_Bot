@@ -364,6 +364,16 @@ client.on('interactionCreate', async (interaction) => {
                         PermissionFlagsBits.AttachFiles,
                         PermissionFlagsBits.ReadMessageHistory
                     ]
+                },
+                {
+                    id: userId, // The User who opened the ticket
+                    allow: [
+                        PermissionFlagsBits.ViewChannel,
+                        PermissionFlagsBits.SendMessages,
+                        PermissionFlagsBits.EmbedLinks,
+                        PermissionFlagsBits.AttachFiles,
+                        PermissionFlagsBits.ReadMessageHistory
+                    ]
                 }
             ];
 
