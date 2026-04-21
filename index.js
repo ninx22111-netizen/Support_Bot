@@ -45,9 +45,10 @@ const client = new Client({
         GatewayIntentBits.GuildMessageTyping
     ],
     partials: [
-        Partials.Channel, // Required for DM events
+        Partials.Channel,
         Partials.Message,
-        Partials.User
+        Partials.User,
+        Partials.GuildMember // Added for better DM handling
     ]
 });
 
@@ -166,18 +167,12 @@ client.on('typingStart', (typing) => {
 // HANDLE DIRECT MESSAGES
 // ============================================
 client.on('messageCreate', async (message) => {
-    // 🔥 MASSIVE DEBUG LOG TO TRACE DMS
-    console.log(`[DEBUG RAW] Saw message! Author: ${message?.author?.tag || 'Unknown'}, IsBot: ${message?.author?.bot || 'Unknown'}, ChannelType: ${message?.channel?.type}`);
-    // Fetch partial messages/channels so DMs work properly
+    // Fetch if partial
     if (message.partial) {
-        try { message = await message.fetch(); } catch (err) {
-            console.error('⚠️  Could not fetch partial message:', err.message);
-            return;
-        }
-    }
-    if (message.channel.partial) {
-        try { await message.channel.fetch(); } catch (err) {
-            console.error('⚠️  Could not fetch partial channel:', err.message);
+        try {
+            await message.fetch();
+        } catch (error) {
+            console.error('Something went wrong when fetching the message:', error);
             return;
         }
     }
@@ -185,9 +180,12 @@ client.on('messageCreate', async (message) => {
     // Ignore bots
     if (message.author.bot) return;
 
+    // Log for debugging
+    console.log(`📩 Message from ${message.author.username} in ${message.guild ? 'Guild' : 'DM'} (${message.channelId})`);
+
     // ── DM Message ────────────────────────────────────────
-    if (message.channel.type === ChannelType.DM) {
-        console.log(`📩  DM received from ${message.author.username}: "${message.content.substring(0, 50)}"`);
+    // On v14, DM channels may require a manual fetch or subtype check
+    if (!message.guild) {
         return handleDM(message);
     }
 
