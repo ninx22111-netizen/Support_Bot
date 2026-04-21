@@ -131,11 +131,26 @@ async function rebuildTicketCache() {
 // HANDLE DIRECT MESSAGES
 // ============================================
 client.on('messageCreate', async (message) => {
+    // Fetch partial messages/channels so DMs work properly
+    if (message.partial) {
+        try { message = await message.fetch(); } catch (err) {
+            console.error('⚠️  Could not fetch partial message:', err.message);
+            return;
+        }
+    }
+    if (message.channel.partial) {
+        try { await message.channel.fetch(); } catch (err) {
+            console.error('⚠️  Could not fetch partial channel:', err.message);
+            return;
+        }
+    }
+
     // Ignore bots
     if (message.author.bot) return;
 
     // ── DM Message ────────────────────────────────────────
     if (message.channel.type === ChannelType.DM) {
+        console.log(`📩  DM received from ${message.author.username}: "${message.content.substring(0, 50)}"`);
         return handleDM(message);
     }
 
