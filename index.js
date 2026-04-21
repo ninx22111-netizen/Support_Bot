@@ -329,8 +329,21 @@ client.on('interactionCreate', async (interaction) => {
             const channels = await guild.channels.fetch();
             
             // Auto-detect Category and Log channel by NAME
-            const category = channels.find(c => c.type === ChannelType.GuildCategory && (c.name.toLowerCase() === 'tickets' || c.name.toLowerCase() === 'support'));
+            let category = channels.find(c => c.type === ChannelType.GuildCategory && (c.name.toLowerCase() === 'tickets' || c.name.toLowerCase() === 'support'));
             const logChannel = channels.find(c => c.type === ChannelType.GuildText && (c.name.toLowerCase() === 'ticket-logs' || c.name.toLowerCase() === 'modmail-logs'));
+
+            // If no category found, TRY TO CREATE ONE
+            if (!category) {
+                try {
+                    category = await guild.channels.create({
+                        name: 'Tickets',
+                        type: ChannelType.GuildCategory,
+                        permissionOverwrites: [{ id: guild.id, deny: [PermissionFlagsBits.ViewChannel] }]
+                    });
+                } catch (e) {
+                    console.log('⚠️ Could not auto-create category, creating channel at top of server.');
+                }
+            }
 
             const username = interaction.user.username.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
 
@@ -439,10 +452,10 @@ client.on('interactionCreate', async (interaction) => {
             await interaction.editReply({ embeds: [confirmEmbed], components: [] });
 
         } catch (err) {
-            console.error('Failed to create ticket:', err);
+            console.error('❌ TICKET CREATION FAILED:', err);
             pendingPrompts.delete(userId);
             await interaction.editReply({
-                content: '❌ Something went wrong creating your ticket. Please try again later.',
+                content: `❌ Something went wrong: ${err.message}`,
                 embeds: [],
                 components: []
             }).catch(() => {});
