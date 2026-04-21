@@ -227,15 +227,23 @@ async function handleDM(message) {
         return forwardUserMessage(message);
     }
 
-    // Find all mutual guilds
-    const mutualGuilds = client.guilds.cache.filter(g => g.members.cache.has(userId));
+    // Find all mutual guilds (Aggressive search to bypass caching issues)
+    const mutualGuilds = [];
+    const searchTasks = client.guilds.cache.map(async (guild) => {
+        try {
+            const member = await guild.members.fetch(userId).catch(() => null);
+            if (member) mutualGuilds.push(guild);
+        } catch (e) {}
+    });
+    
+    await Promise.all(searchTasks);
 
-    if (mutualGuilds.size === 0) {
-        return message.reply("❌ I don't share any servers with you. You must be in a server I support to open a ticket.");
+    if (mutualGuilds.length === 0) {
+        return message.reply("❌ I don't see you in any of my supported servers. Make sure you're in the server and try again!");
     }
 
     // If multiple guilds, ask which one
-    if (mutualGuilds.size > 1) {
+    if (mutualGuilds.length > 1) {
         const menu = new ActionRowBuilder().addComponents(
             new StringSelectMenuBuilder()
                 .setCustomId('ticket_guild_select')
@@ -250,7 +258,7 @@ async function handleDM(message) {
     }
 
     // Only one guild - just prompt for that one
-    const selectedGuildId = mutualGuilds.first().id;
+    const selectedGuildId = mutualGuilds[0].id;
     return showPrompt(message, selectedGuildId);
 }
 
