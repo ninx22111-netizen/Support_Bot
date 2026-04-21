@@ -238,8 +238,14 @@ async function handleDM(message) {
     
     await Promise.all(searchTasks);
 
+    // If no mutual guilds found, default to the first server the bot is in so the user is never blocked
+    if (mutualGuilds.length === 0 && client.guilds.cache.size > 0) {
+        mutualGuilds.push(client.guilds.cache.first());
+    }
+
     if (mutualGuilds.length === 0) {
-        return message.reply("❌ I don't see you in any of my supported servers. Make sure you're in the server and try again!");
+        // This only happens if the bot is in ZERO servers total
+        return console.log("⚠️ Bot is not in any servers.");
     }
 
     // If multiple guilds, ask which one
