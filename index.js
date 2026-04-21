@@ -206,9 +206,10 @@ async function handleDM(message) {
         return forwardUserMessage(message);
     }
 
-    // If user is already being prompted, don't send another prompt
+    // If user is already being prompted, let them see the prompt again 
+    // by removing them from pending so it regenerates.
     if (pendingPrompts.has(userId)) {
-        return;
+        pendingPrompts.delete(userId);
     }
 
     // Mark as pending
