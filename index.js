@@ -183,12 +183,9 @@ async function handleDM(message) {
 
     // Otherwise, prompt them to open a ticket
     const promptEmbed = new EmbedBuilder()
-        .setTitle('📩  122 Team Support')
-        .setDescription(
-            'Hello! Would you like to open a support ticket?\n\n' +
-            'A staff member will be with you shortly after you open one.'
-        )
-        .setColor(COLORS.PRIMARY)
+        .setTitle('📩  Ticket creation confirmation')
+        .setDescription('Are you sure you would like to open a ticket?')
+        .setColor(COLORS.CLOSE) // Red color
         .setFooter({ text: '122 Team • Support System' })
         .setTimestamp();
 
@@ -409,17 +406,44 @@ async function forwardUserMessage(message) {
         // Handle attachments
         const files = [];
         if (message.attachments.size > 0) {
-            const attachmentList = message.attachments.map(a => `[${a.name}](${a.url})`).join('\n');
-            userEmbed.addFields({ name: '📎 Attachments', value: attachmentList });
             message.attachments.forEach(a => {
                 files.push(new AttachmentBuilder(a.url, { name: a.name }));
             });
         }
 
-        await channel.send({ embeds: [userEmbed], files });
+        // RED embed for Staff's screen
+        const staffScreenEmbed = new EmbedBuilder()
+            .setAuthor({
+                name: displayName,
+                iconURL: message.author.displayAvatarURL()
+            })
+            .setDescription(message.content || '*No text content*')
+            .setColor(COLORS.CLOSE) // Red
+            .setFooter({ text: 'Member Message' })
+            .setTimestamp();
+            
+        if (files.length > 0) {
+            staffScreenEmbed.addFields({ name: '📎 Attachments', value: 'Attached below' });
+        }
 
-        // React to confirm delivery
-        await message.react('✅').catch(() => {});
+        // Send to staff channel
+        await channel.send({ embeds: [staffScreenEmbed], files });
+
+        // GREEN embed for User's screen (echo to confirm it sent)
+        const userScreenEmbed = new EmbedBuilder()
+            .setAuthor({
+                name: "You",
+                iconURL: message.author.displayAvatarURL()
+            })
+            .setDescription(message.content || '*No text content*')
+            .setColor(COLORS.SUCCESS) // Green
+            .setTimestamp();
+
+        if (files.length > 0) {
+            userScreenEmbed.addFields({ name: '📎 Attachments', value: 'Attached below' });
+        }
+
+        await message.author.send({ embeds: [userScreenEmbed], files }).catch(() => {});
 
     } catch (err) {
         console.error('Failed to forward user message:', err.message);
@@ -482,22 +506,46 @@ async function handleGuildMessage(message) {
         // Handle attachments
         const files = [];
         if (message.attachments.size > 0) {
-            const attachmentList = message.attachments.map(a => `[${a.name}](${a.url})`).join('\n');
-            staffEmbed.addFields({ name: '📎 Attachments', value: attachmentList });
             message.attachments.forEach(a => {
                 files.push(new AttachmentBuilder(a.url, { name: a.name }));
             });
         }
 
-        await user.send({ embeds: [staffEmbed], files });
+        // RED embed for User's screen
+        const userScreenEmbed = new EmbedBuilder()
+            .setAuthor({
+                name: `${staffDisplayName} • Staff`,
+                iconURL: message.author.displayAvatarURL()
+            })
+            .setDescription(message.content || '*No text content*')
+            .setColor(COLORS.CLOSE) // Red
+            .setFooter({ text: '122 Team • Staff Response' })
+            .setTimestamp();
 
-        // React to confirm delivery
-        await message.react('📨').catch(() => {});
+        if (files.length > 0) {
+            userScreenEmbed.addFields({ name: '📎 Attachments', value: 'Attached below' });
+        }
 
-    } catch (err) {
-        console.error('Failed to relay staff message:', err.message);
-        await message.reply('⚠️ Could not deliver message to the user. They may have DMs disabled.').catch(() => {});
-    }
+        // Send to User
+        await user.send({ embeds: [userScreenEmbed], files });
+
+        // GREEN embed for Staff's screen
+        const staffScreenEmbed = new EmbedBuilder()
+            .setAuthor({
+                name: "You (Staff)",
+                iconURL: message.author.displayAvatarURL()
+            })
+            .setDescription(message.content || '*No text content*')
+            .setColor(COLORS.SUCCESS) // Green
+            .setTimestamp();
+
+        if (files.length > 0) {
+            staffScreenEmbed.addFields({ name: '📎 Attachments', value: 'Attached below' });
+        }
+
+        // Replace staff's raw message with the Green embed
+        await message.channel.send({ embeds: [staffScreenEmbed], files });
+        await message.delete().catch(() => {});
 }
 
 // ============================================
