@@ -348,6 +348,7 @@ client.on('interactionCreate', async (interaction) => {
         try {
             const guild = await client.guilds.fetch(guildId);
             const channels = await guild.channels.fetch();
+            const member = await guild.members.fetch(userId).catch(() => null);
             
             // Auto-detect Category and Log channel by NAME
             let category = channels.find(c => c.type === ChannelType.GuildCategory && (c.name.toLowerCase() === 'tickets' || c.name.toLowerCase() === 'support'));
@@ -466,10 +467,15 @@ client.on('interactionCreate', async (interaction) => {
 
             // Ping staff roles
             if (CONFIG.staffRoleIds.length > 0) {
-                const pings = CONFIG.staffRoleIds.map(id => `<@&${id}>`).join(' ');
-                const pingMsg = await ticketChannel.send(`${pings} — New ticket from **${displayName}**`);
-                // Delete the ping after 3 seconds to keep it clean
-                setTimeout(() => pingMsg.delete().catch(() => {}), 3000);
+                const validPings = CONFIG.staffRoleIds
+                    .filter(id => guild.roles.cache.has(id))
+                    .map(id => `<@&${id}>`);
+
+                if (validPings.length > 0) {
+                    const pingMsg = await ticketChannel.send(`${validPings.join(' ')} — New ticket from **${displayName}**`);
+                    // Delete the ping after 3 seconds to keep it clean
+                    setTimeout(() => pingMsg.delete().catch(() => {}), 3000);
+                }
             }
 
             // Confirm to the user — update the original prompt message
@@ -785,10 +791,8 @@ async function closeTicket(channel, closedBy) {
             console.log(`Could not notify user ${userId} about ticket closure (DMs may be closed).`);
         });
 
-        // Log to log channel if configured
-        if (CONFIG.logChannelId) {
-            await logTicketClose(channel, user, closedBy);
-        }
+        // Log to log channel dynamically
+        await logTicketClose(channel, user, closedBy);
 
         // Clean up tracking
         activeTickets.delete(userId);
@@ -822,8 +826,9 @@ async function closeTicket(channel, closedBy) {
 // ============================================
 async function logTicketClose(ticketChannel, user, closedBy) {
     try {
-        const guild = await client.guilds.fetch(CONFIG.guildId);
-        const logChannel = await guild.channels.fetch(CONFIG.logChannelId);
+        const guild = ticketChannel.guild;
+        const channels = await guild.channels.fetch();
+        const logChannel = channels.find(c => c.type === ChannelType.GuildText && (c.name.toLowerCase() === 'ticket-logs' || c.name.toLowerCase() === 'modmail-logs'));
 
         if (!logChannel) return;
 
