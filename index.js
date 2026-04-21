@@ -19,7 +19,8 @@ const {
     PermissionFlagsBits,
     Collection,
     AttachmentBuilder,
-    UserSelectMenuBuilder
+    UserSelectMenuBuilder,
+    StringSelectMenuBuilder
 } = require('discord.js');
 
 // ── Web Server for Render ────────────────────────────────
@@ -139,9 +140,9 @@ client.once('ready', async () => {
     console.log(`📋  Guild: ${CONFIG.guildId}`);
     console.log(`👮  Staff Roles: ${CONFIG.staffRoleIds.join(', ')}`);
     console.log(`📁  Ticket Category: ${CONFIG.ticketCategoryId || 'None (top of server)'}`);
-    console.log(`📝  Log Channel: ${CONFIG.logChannelId || 'None'}`);
     console.log(`🔌  WebSocket Status: ${client.ws.status}`);
-    console.log(`🏠  Guilds cached: ${client.guilds.cache.size}`);
+    console.log(`🏠  Servers: ${client.guilds.cache.size} (Multi-Guild Active)`);
+    console.log(`📡  Mode: Auto-Detect "Tickets" & "modmail-logs"`);
     console.log(`⏱️  Ping: ${client.ws.ping}ms\n`);
 
     client.user.setPresence({
@@ -159,29 +160,24 @@ client.once('ready', async () => {
 // ============================================
 // Scans for existing ticket channels so the bot survives restarts
 async function rebuildTicketCache() {
+    activeTickets.clear();
+    channelToUser.clear();
     try {
-        const guild = await client.guilds.fetch(CONFIG.guildId);
-        const channels = await guild.channels.fetch();
-
-        channels.forEach(channel => {
-            if (channel && channel.name && channel.name.startsWith('ticket-')) {
-                // Try to find the topic which stores the user ID
-                if (channel.topic) {
+        for (const [guildId, guild] of client.guilds.cache) {
+            const channels = await guild.channels.fetch().catch(() => new Collection());
+            channels.forEach(channel => {
+                if (channel && channel.name && channel.name.startsWith('ticket-') && channel.topic) {
                     const userId = channel.topic;
-                    activeTickets.set(userId, {
-                        channelId: channel.id,
-                        guildId: guild.id
-                    });
+                    activeTickets.set(userId, { channelId: channel.id, guildId: guild.id });
                     channelToUser.set(channel.id, userId);
                 }
-            }
-        });
-
+            });
+        }
         if (activeTickets.size > 0) {
-            console.log(`🔄  Rebuilt ${activeTickets.size} active ticket(s) from existing channels.`);
+            console.log(`🔄 Rebuilt ${activeTickets.size} ticket(s) from ${client.guilds.cache.size} servers.`);
         }
     } catch (err) {
-        console.error('⚠️  Could not rebuild ticket cache:', err.message);
+        console.error('⚠️ Rebuild error:', err.message);
     }
 }
 
@@ -231,26 +227,49 @@ async function handleDM(message) {
         return forwardUserMessage(message);
     }
 
-    // If user is already being prompted, let them see the prompt again 
-    // by removing them from pending so it regenerates.
-    if (pendingPrompts.has(userId)) {
-        pendingPrompts.delete(userId);
+    // Find all mutual guilds
+    const mutualGuilds = client.guilds.cache.filter(g => g.members.cache.has(userId));
+
+    if (mutualGuilds.size === 0) {
+        return message.reply("❌ I don't share any servers with you. You must be in a server I support to open a ticket.");
     }
 
-    // Mark as pending
+    // If multiple guilds, ask which one
+    if (mutualGuilds.size > 1) {
+        const menu = new ActionRowBuilder().addComponents(
+            new StringSelectMenuBuilder()
+                .setCustomId('ticket_guild_select')
+                .setPlaceholder('Which server do you need help with?')
+                .addOptions(mutualGuilds.map(g => ({
+                    label: g.name,
+                    value: g.id,
+                    description: `Open a ticket in ${g.name}`
+                })))
+        );
+        return message.reply({ content: "Select the server you are contacting:", components: [menu] });
+    }
+
+    // Only one guild - just prompt for that one
+    const selectedGuildId = mutualGuilds.first().id;
+    return showPrompt(message, selectedGuildId);
+}
+
+async function showPrompt(message, guildId) {
+    const userId = message.author.id;
     pendingPrompts.add(userId);
 
-    // Otherwise, prompt them to open a ticket
+    const guild = client.guilds.cache.get(guildId);
+    
     const promptEmbed = new EmbedBuilder()
         .setTitle('📩  Ticket creation confirmation')
-        .setDescription('Are you sure you would like to open a ticket?')
-        .setColor(COLORS.CLOSE) // Red color
+        .setDescription(`Are you sure you would like to open a ticket for **${guild.name}**?`)
+        .setColor(COLORS.CLOSE)
         .setFooter({ text: '122 Team • Support System' })
         .setTimestamp();
 
     const buttons = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
-            .setCustomId('ticket_open_yes')
+            .setCustomId(`ticket_open_yes_${guildId}`)
             .setLabel('✅ Open Ticket')
             .setStyle(ButtonStyle.Success),
         new ButtonBuilder()
@@ -259,29 +278,32 @@ async function handleDM(message) {
             .setStyle(ButtonStyle.Danger)
     );
 
-    try {
-        await message.reply({ embeds: [promptEmbed], components: [buttons] });
-    } catch (err) {
-        console.error('Failed to send ticket prompt:', err.message);
-        pendingPrompts.delete(userId); // Clean up on failure
-    }
+    await message.reply({ embeds: [promptEmbed], components: [buttons] });
 }
 
 // ============================================
 // HANDLE BUTTON INTERACTIONS
 // ============================================
 client.on('interactionCreate', async (interaction) => {
-    if (!interaction.isButton()) return;
+    // ── Guild Selection Dropdown ──────────────────────────
+    if (interaction.isStringSelectMenu() && interaction.customId === 'ticket_guild_select') {
+        const guildId = interaction.values[0];
+        await interaction.update({ content: '✅ Server selected!', components: [] });
+        return showPrompt(interaction.message, guildId);
+    }
+
+    if (!interaction.isButton() && !interaction.isUserSelectMenu()) return;
 
     const userId = interaction.user.id;
 
     // ── YES — Open Ticket ─────────────────────────────────
-    if (interaction.customId === 'ticket_open_yes') {
-        // Prevent double-open
+    if (interaction.isButton() && interaction.customId.startsWith('ticket_open_yes_')) {
+        const guildId = interaction.customId.replace('ticket_open_yes_', '');
+        
         if (activeTickets.has(userId)) {
             pendingPrompts.delete(userId);
             return interaction.reply({
-                content: '⚠️ You already have an active ticket! Just send your message here and staff will see it.',
+                content: '⚠️ You already have an active ticket!',
                 ephemeral: true
             });
         }
@@ -289,9 +311,15 @@ client.on('interactionCreate', async (interaction) => {
         await interaction.deferUpdate();
 
         try {
-            const guild = await client.guilds.fetch(CONFIG.guildId);
-            const member = await guild.members.fetch(userId).catch(() => null);
+            const guild = await client.guilds.fetch(guildId);
+            const channels = await guild.channels.fetch();
+            
+            // Auto-detect Category and Log channel by NAME
+            const category = channels.find(c => c.type === ChannelType.GuildCategory && c.name.toLowerCase() === 'tickets');
+            const logChannel = channels.find(c => c.type === ChannelType.GuildText && c.name.toLowerCase() === 'modmail-logs');
+
             const username = interaction.user.username.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
+
 
             // Build permission overwrites
             const permissionOverwrites = [
@@ -330,7 +358,7 @@ client.on('interactionCreate', async (interaction) => {
             const ticketChannel = await guild.channels.create({
                 name: `ticket-${username}`,
                 type: ChannelType.GuildText,
-                parent: CONFIG.ticketCategoryId || undefined,
+                parent: category ? category.id : undefined,
                 topic: userId, // Store user ID in topic for cache rebuilding
                 permissionOverwrites
             });
