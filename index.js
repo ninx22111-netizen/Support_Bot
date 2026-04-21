@@ -131,6 +131,8 @@ async function rebuildTicketCache() {
 // HANDLE DIRECT MESSAGES
 // ============================================
 client.on('messageCreate', async (message) => {
+    // 🔥 MASSIVE DEBUG LOG TO TRACE DMS
+    console.log(`[DEBUG RAW] Saw message! Author: ${message?.author?.tag || 'Unknown'}, IsBot: ${message?.author?.bot || 'Unknown'}, ChannelType: ${message?.channel?.type}`);
     // Fetch partial messages/channels so DMs work properly
     if (message.partial) {
         try { message = await message.fetch(); } catch (err) {
