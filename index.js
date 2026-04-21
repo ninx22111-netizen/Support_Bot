@@ -536,6 +536,14 @@ async function handleGuildMessage(message) {
         const staffDisplayName = message.member?.displayName || message.author.globalName || message.author.username;
         const finalContent = message.content || message.cleanContent || "*Text content hidden or empty*";
 
+        // Handle attachments
+        const files = [];
+        if (message.attachments.size > 0) {
+            message.attachments.forEach(a => {
+                files.push(new AttachmentBuilder(a.url, { name: a.name }));
+            });
+        }
+
         // RED embed for User's screen
         const userScreenEmbed = new EmbedBuilder()
             .setAuthor({
