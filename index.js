@@ -81,19 +81,35 @@ const COLORS = {
 };
 
 // ============================================
-// 🔥 RAW GATEWAY DEBUG — catches ALL events before discord.js processes them
+// 🔥 RAW GATEWAY HIJACK — Force DMs to process
 // ============================================
-client.on('raw', (packet) => {
-    // Only log message-related events to avoid spam
+// On some hosts/accounts, discord.js drops DM events silently.
+// This catches the raw discord packet and forces the bot to respond.
+const processedMessages = new Set();
+
+client.on('raw', async (packet) => {
     if (packet.t === 'MESSAGE_CREATE') {
         const d = packet.d;
         const isDM = !d.guild_id;
-        console.log(`[RAW GATEWAY] MESSAGE_CREATE | Author: ${d.author?.username || 'unknown'} | IsDM: ${isDM} | GuildID: ${d.guild_id || 'NONE (DM)'} | Content: "${(d.content || '').substring(0, 30)}"`);
-    }
-    if (packet.t === 'TYPING_START') {
-        const d = packet.d;
-        const isDM = !d.guild_id;
-        console.log(`[RAW GATEWAY] TYPING_START | UserID: ${d.user_id} | IsDM: ${isDM}`);
+
+        // If it's a DM from a real user, forcefully process it
+        if (isDM && d.author && !d.author.bot) {
+            if (processedMessages.has(d.id)) return; // Prevent double-processing
+            processedMessages.add(d.id);
+
+            try {
+                // Manually fetch the objects instead of waiting for discord.js
+                const channel = await client.channels.fetch(d.channel_id);
+                const message = await channel.messages.fetch(d.id);
+                
+                console.log(`[RAW HIJACK] Force-processing DM from ${message.author.username}: "${(message.content || '').substring(0, 30)}"`);
+                
+                // Directly trigger the logic, bypassing messageCreate completely
+                handleDM(message);
+            } catch (err) {
+                console.error('[RAW HIJACK ERROR] Could not force-process DM:', err.message);
+            }
+        }
     }
 });
 
