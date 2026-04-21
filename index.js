@@ -18,7 +18,8 @@ const {
     ChannelType,
     PermissionFlagsBits,
     Collection,
-    AttachmentBuilder
+    AttachmentBuilder,
+    UserSelectMenuBuilder
 } = require('discord.js');
 
 // ── Web Server for Render ────────────────────────────────
@@ -52,12 +53,16 @@ const client = new Client({
     ]
 });
 
-// ── In-Memory Ticket Tracking ─────────────────────────────
-// Maps: userId -> { channelId, guildId }
+// Track processed message IDs to prevent duplicates (Raw vs Library)
+const processedMessageIds = new Set();
+// Periodically clear old IDs to save memory
+setInterval(() => processedMessageIds.clear(), 1000 * 60 * 60);
+
+// Maps: userId -> { channelId, guildId, claimedBy }
 const activeTickets = new Collection();
 // Maps: channelId -> userId (reverse lookup for staff replies)
 const channelToUser = new Collection();
-// Track users who are currently being prompted (prevent duplicate prompts)
+// Track users who are currently being prompted
 const pendingPrompts = new Set();
 
 // ── Config ────────────────────────────────────────────────
@@ -109,21 +114,14 @@ client.on('raw', async (packet) => {
 
         // If it's a DM from a real user, forcefully process it
         if (isDM && d.author && !d.author.bot) {
-            if (processedMessages.has(d.id)) return; // Prevent double-processing
-            processedMessages.add(d.id);
+            if (processedMessageIds.has(d.id)) return;
+            // No .add() here, handleDM will do it if successful
 
             try {
-                // Manually fetch the objects instead of waiting for discord.js
                 const channel = await client.channels.fetch(d.channel_id);
                 const message = await channel.messages.fetch(d.id);
-                
-                console.log(`[RAW HIJACK] Force-processing DM from ${message.author.username}: "${(message.content || '').substring(0, 30)}"`);
-                
-                // Directly trigger the logic, bypassing messageCreate completely
                 handleDM(message);
-            } catch (err) {
-                console.error('[RAW HIJACK ERROR] Could not force-process DM:', err.message);
-            }
+            } catch (err) {}
         }
     }
 });
@@ -198,24 +196,17 @@ client.on('typingStart', (typing) => {
 // HANDLE DIRECT MESSAGES
 // ============================================
 client.on('messageCreate', async (message) => {
+    if (processedMessageIds.has(message.id)) return;
+
     // Fetch if partial
     if (message.partial) {
-        try {
-            await message.fetch();
-        } catch (error) {
-            console.error('Something went wrong when fetching the message:', error);
-            return;
-        }
+        try { await message.fetch(); } catch (err) { return; }
     }
 
     // Ignore bots
     if (message.author.bot) return;
 
-    // Log for debugging
-    console.log(`📩 Message from ${message.author.username} in ${message.guild ? 'Guild' : 'DM'} (${message.channelId})`);
-
     // ── DM Message ────────────────────────────────────────
-    // On v14, DM channels may require a manual fetch or subtype check
     if (!message.guild) {
         return handleDM(message);
     }
@@ -230,6 +221,9 @@ client.on('messageCreate', async (message) => {
 // HANDLE DM LOGIC
 // ============================================
 async function handleDM(message) {
+    if (processedMessageIds.has(message.id)) return;
+    processedMessageIds.add(message.id);
+
     const userId = message.author.id;
 
     // If user already has an active ticket, forward the message
@@ -364,14 +358,22 @@ client.on('interactionCreate', async (interaction) => {
                 .setFooter({ text: 'Reply in this channel to respond • !close to close' })
                 .setTimestamp();
 
-            const closeButton = new ActionRowBuilder().addComponents(
+            const controlPanel = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId('ticket_claim')
+                    .setLabel('🙋 Claim')
+                    .setStyle(ButtonStyle.Primary),
+                new ButtonBuilder()
+                    .setCustomId('ticket_transfer')
+                    .setLabel('🔄 Transfer')
+                    .setStyle(ButtonStyle.Secondary),
                 new ButtonBuilder()
                     .setCustomId('ticket_close')
-                    .setLabel('🔒 Close Ticket')
+                    .setLabel('🔒 Close')
                     .setStyle(ButtonStyle.Danger)
             );
 
-            await ticketChannel.send({ embeds: [openEmbed], components: [closeButton] });
+            await ticketChannel.send({ embeds: [openEmbed], components: [controlPanel] });
 
             // Ping staff roles
             if (CONFIG.staffRoleIds.length > 0) {
@@ -418,22 +420,60 @@ client.on('interactionCreate', async (interaction) => {
         await interaction.update({ embeds: [dismissEmbed], components: [] });
     }
 
+    // ── CLAIM TICKET ─────────────────────────────────────
+    if (interaction.customId === 'ticket_claim') {
+        const isStaff = isUserStaff(interaction.member, interaction.guild);
+        if (!isStaff) return interaction.reply({ content: '❌ Staff only.', ephemeral: true });
+
+        const ticketUserId = channelToUser.get(interaction.channel.id);
+        const ticket = activeTickets.get(ticketUserId);
+        if (ticket) ticket.claimedBy = interaction.user.id;
+
+        const claimEmbed = new EmbedBuilder()
+            .setDescription(`✅ Ticket claimed by **${interaction.user.username}**. Only they can respond now.`)
+            .setColor(COLORS.SUCCESS);
+        
+        await interaction.reply({ embeds: [claimEmbed] });
+    }
+
+    // ── TRANSFER TICKET (Show Menu) ──────────────────────
+    if (interaction.customId === 'ticket_transfer') {
+        const isStaff = isUserStaff(interaction.member, interaction.guild);
+        if (!isStaff) return interaction.reply({ content: '❌ Staff only.', ephemeral: true });
+
+        const transferMenu = new ActionRowBuilder().addComponents(
+            new UserSelectMenuBuilder()
+                .setCustomId('ticket_transfer_select')
+                .setPlaceholder('Select a staff member to transfer to...')
+        );
+
+        await interaction.reply({ content: 'Select who to transfer this ticket to:', components: [transferMenu], ephemeral: true });
+    }
+
     // ── CLOSE TICKET (Button) ─────────────────────────────
     if (interaction.customId === 'ticket_close') {
-        // Check if user has a role >= any of the staff roles
         const member = interaction.member;
         const isStaff = isUserStaff(member, interaction.guild);
-        
-        if (!isStaff) {
-            return interaction.reply({
-                content: '❌ Only staff can close tickets.',
-                ephemeral: true
-            });
-        }
+        if (!isStaff) return interaction.reply({ content: '❌ Only staff can close tickets.', ephemeral: true });
 
-        // Reply first BEFORE closing (channel deletion would kill the interaction)
         await interaction.reply({ content: '🔒 Closing ticket...', ephemeral: true });
         await closeTicket(interaction.channel, interaction.user);
+    }
+
+    // ── TRANSFER SELECT (Handle Selection) ────────────────
+    if (interaction.customId === 'ticket_transfer_select') {
+        const targetId = interaction.values[0];
+        const ticketUserId = channelToUser.get(interaction.channel.id);
+        const ticket = activeTickets.get(ticketUserId);
+        
+        if (ticket) ticket.claimedBy = targetId;
+
+        const transferEmbed = new EmbedBuilder()
+            .setDescription(`🔄 Ticket transferred to <@${targetId}>. Only they can respond now.`)
+            .setColor(COLORS.INFO);
+        
+        await interaction.update({ content: '✅ Transferred!', components: [] });
+        await interaction.channel.send({ embeds: [transferEmbed] });
     }
 });
 
@@ -547,8 +587,22 @@ async function handleGuildMessage(message) {
 
     // ── Staff Reply → Forward as Embed to User DMs ───────
     try {
+        const ticket = activeTickets.get(userId);
+        
+        // CLAIM PROTECTION: If ticket is claimed, only the claimant can talk
+        if (ticket.claimedBy && ticket.claimedBy !== message.author.id) {
+            // Ignore other staff if claimed, unless admin
+            if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) {
+                return message.delete().catch(() => {});
+            }
+        }
+
         const user = await client.users.fetch(userId);
-        const staffDisplayName = message.member?.displayName || message.author.globalName || message.author.username;
+        
+        // Find Highest Role for Display
+        const highestRole = message.member?.roles.highest.name || 'Staff';
+        const staffDisplayName = `${message.member?.displayName || message.author.username} • ${highestRole}`;
+        
         const finalContent = message.content || message.cleanContent || "*Text content hidden or empty*";
 
         // Handle attachments
