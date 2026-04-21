@@ -367,13 +367,14 @@ async function forwardUserMessage(message) {
 
     try {
         const guild = await client.guilds.fetch(ticket.guildId);
-        const channel = await guild.channels.fetch(ticket.channelId);
+        // Catch "Unknown Channel" error if staff deleted the channel manually
+        const channel = await guild.channels.fetch(ticket.channelId).catch(() => null);
 
         if (!channel) {
             // Channel was deleted — clean up
             activeTickets.delete(message.author.id);
             channelToUser.delete(ticket.channelId);
-            return message.reply('⚠️ Your ticket channel no longer exists. DM me again to open a new one.');
+            return message.reply('⚠️ Your ticket channel was closed by staff. DM me again to open a new one.');
         }
 
         // Build embed for the user's message
