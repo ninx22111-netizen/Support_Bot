@@ -70,6 +70,21 @@ const CONFIG = {
     logChannelId: process.env.LOG_CHANNEL_ID || null
 };
 
+// ── Staff Verification Helper ─────────────────────────────
+function isUserStaff(member, guild) {
+    if (!member || !guild) return false;
+    
+    // Server admins are always staff
+    if (member.permissions && member.permissions.has(PermissionFlagsBits.Administrator)) return true;
+
+    // Hierarchy check: is the user's highest role >= any configured staff role?
+    return CONFIG.staffRoleIds.some(roleId => {
+        const staffRole = guild.roles.cache.get(roleId);
+        if (!staffRole) return false; // Role ID from .env doesn't exist in server
+        return member.roles.highest.position >= staffRole.position;
+    });
+}
+
 // ── Brand Colors ──────────────────────────────────────────
 const COLORS = {
     PRIMARY: 0x5865F2,   // Discord blurple — ticket prompt
@@ -405,9 +420,9 @@ client.on('interactionCreate', async (interaction) => {
 
     // ── CLOSE TICKET (Button) ─────────────────────────────
     if (interaction.customId === 'ticket_close') {
-        // Check if user has ANY of the staff roles
+        // Check if user has a role >= any of the staff roles
         const member = interaction.member;
-        const isStaff = member && CONFIG.staffRoleIds.some(roleId => member.roles.cache.has(roleId));
+        const isStaff = isUserStaff(member, interaction.guild);
         
         if (!isStaff) {
             return interaction.reply({
@@ -506,9 +521,9 @@ async function handleGuildMessage(message) {
 
     // ── !close Command ────────────────────────────────────
     if (message.content.toLowerCase() === '!close') {
-        // Check staff roles
+        // Check staff roles (hierarchy)
         const member = message.member || await message.guild.members.fetch(message.author.id).catch(() => null);
-        const isStaff = member && CONFIG.staffRoleIds.some(roleId => member.roles.cache.has(roleId));
+        const isStaff = isUserStaff(member, message.guild);
         
         if (!isStaff) {
             return message.reply('❌ Only staff can close tickets.').catch(() => {});
@@ -519,7 +534,7 @@ async function handleGuildMessage(message) {
     // ── !transcript Command ───────────────────────────────
     if (message.content.toLowerCase() === '!transcript') {
         const member = message.member || await message.guild.members.fetch(message.author.id).catch(() => null);
-        const isStaff = member && CONFIG.staffRoleIds.some(roleId => member.roles.cache.has(roleId));
+        const isStaff = isUserStaff(member, message.guild);
         
         if (!isStaff) {
             return message.reply('❌ Only staff can generate transcripts.').catch(() => {});
