@@ -426,13 +426,16 @@ async function forwardUserMessage(message) {
 
         // Build embed for the user's message
         const displayName = message.author.globalName || message.author.username;
-        const userEmbed = new EmbedBuilder()
+        const finalContent = message.content || message.cleanContent || "*Text content hidden or empty*";
+
+        // RED embed for Staff's screen
+        const staffScreenEmbed = new EmbedBuilder()
             .setAuthor({
                 name: displayName,
                 iconURL: message.author.displayAvatarURL()
             })
-            .setDescription(message.content || '*No text content*')
-            .setColor(COLORS.USER)
+            .setDescription(finalContent)
+            .setColor(COLORS.CLOSE) // Red
             .setFooter({ text: 'Member Message' })
             .setTimestamp();
 
@@ -468,7 +471,7 @@ async function forwardUserMessage(message) {
                 name: "You",
                 iconURL: message.author.displayAvatarURL()
             })
-            .setDescription(message.content || '*No text content*')
+            .setDescription(finalContent)
             .setColor(COLORS.SUCCESS) // Green
             .setTimestamp();
 
@@ -525,24 +528,7 @@ async function handleGuildMessage(message) {
     try {
         const user = await client.users.fetch(userId);
         const staffDisplayName = message.member?.displayName || message.author.globalName || message.author.username;
-
-        const staffEmbed = new EmbedBuilder()
-            .setAuthor({
-                name: `${staffDisplayName} • Staff`,
-                iconURL: message.author.displayAvatarURL()
-            })
-            .setDescription(message.content || '*No text content*')
-            .setColor(COLORS.STAFF)
-            .setFooter({ text: '122 Team • Staff Response' })
-            .setTimestamp();
-
-        // Handle attachments
-        const files = [];
-        if (message.attachments.size > 0) {
-            message.attachments.forEach(a => {
-                files.push(new AttachmentBuilder(a.url, { name: a.name }));
-            });
-        }
+        const finalContent = message.content || message.cleanContent || "*Text content hidden or empty*";
 
         // RED embed for User's screen
         const userScreenEmbed = new EmbedBuilder()
@@ -550,7 +536,7 @@ async function handleGuildMessage(message) {
                 name: `${staffDisplayName} • Staff`,
                 iconURL: message.author.displayAvatarURL()
             })
-            .setDescription(message.content || '*No text content*')
+            .setDescription(finalContent)
             .setColor(COLORS.CLOSE) // Red
             .setFooter({ text: '122 Team • Staff Response' })
             .setTimestamp();
@@ -568,7 +554,7 @@ async function handleGuildMessage(message) {
                 name: "You (Staff)",
                 iconURL: message.author.displayAvatarURL()
             })
-            .setDescription(message.content || '*No text content*')
+            .setDescription(finalContent)
             .setColor(COLORS.SUCCESS) // Green
             .setTimestamp();
 
