@@ -589,6 +589,27 @@ client.on('interactionCreate', async (interaction) => {
         await interaction.update({ content: '✅ Transferred!', components: [] });
         await interaction.channel.send({ embeds: [transferEmbed] });
     }
+
+    // ── VIEW TRANSCRIPT (Button in Logs) ──────────────────
+    if (interaction.isButton() && interaction.customId && interaction.customId.startsWith('view_transcript_')) {
+        const transcriptId = interaction.customId.replace('view_transcript_', '');
+        const fs = require('fs');
+        const path = require('path');
+        const filePath = path.join(__dirname, 'transcripts', `${transcriptId}.txt`);
+        
+        if (fs.existsSync(filePath)) {
+            await interaction.reply({
+                content: '📄 Here is the transcript for this ticket:',
+                files: [filePath],
+                ephemeral: true
+            });
+        } else {
+            await interaction.reply({
+                content: '❌ Sorry, the transcript for this ticket is no longer available.',
+                ephemeral: true
+            });
+        }
+    }
 });
 
 // ============================================
@@ -851,6 +872,36 @@ async function logTicketClose(ticketChannel, user, closedBy) {
 
         if (!logChannel) return;
 
+        // Generate Transcript before channel is deleted
+        const messages = await ticketChannel.messages.fetch({ limit: 100 });
+        const sorted = messages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+
+        let transcript = `📋 TRANSCRIPT — #${ticketChannel.name}\n`;
+        transcript += `User: ${user.globalName || user.username} (${user.id})\n`;
+        transcript += `Closed by: ${closedBy.globalName || closedBy.username}\n`;
+        transcript += `Date: ${new Date().toISOString()}\n`;
+        transcript += '═'.repeat(50) + '\n\n';
+
+        sorted.forEach(msg => {
+            const time = new Date(msg.createdTimestamp).toLocaleString();
+            const author = msg.author.globalName || msg.author.username;
+            const content = msg.content || '[Embed/Attachment]';
+            transcript += `[${time}] ${author}: ${content}\n`;
+        });
+
+        // Save transcript to local file system
+        const fs = require('fs');
+        const path = require('path');
+        const transcriptsDir = path.join(__dirname, 'transcripts');
+        if (!fs.existsSync(transcriptsDir)) {
+            fs.mkdirSync(transcriptsDir);
+        }
+        
+        const transcriptId = ticketChannel.id;
+        const filePath = path.join(transcriptsDir, `${transcriptId}.txt`);
+        fs.writeFileSync(filePath, transcript, 'utf-8');
+
+        // Log Embed
         const userName = user.globalName || user.username;
         const closedByName = closedBy.globalName || closedBy.username;
         const logEmbed = new EmbedBuilder()
@@ -863,7 +914,15 @@ async function logTicketClose(ticketChannel, user, closedBy) {
             .setColor(COLORS.INFO)
             .setTimestamp();
 
-        await logChannel.send({ embeds: [logEmbed] });
+        // Button Row
+        const buttonRow = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId(`view_transcript_${transcriptId}`)
+                .setLabel('📄 See the messages')
+                .setStyle(ButtonStyle.Secondary)
+        );
+
+        await logChannel.send({ embeds: [logEmbed], components: [buttonRow] });
 
     } catch (err) {
         console.error('Failed to log ticket closure:', err.message);
