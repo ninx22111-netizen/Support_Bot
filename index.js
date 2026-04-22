@@ -79,7 +79,7 @@ const CONFIG = {
 // ── Staff Verification Helper ─────────────────────────────
 function isUserStaff(member, guild) {
     if (!member || !guild) return false;
-    
+
     // Server admins are always staff
     if (member.permissions && member.permissions.has(PermissionFlagsBits.Administrator)) return true;
 
@@ -122,7 +122,7 @@ client.on('raw', async (packet) => {
                 const channel = await client.channels.fetch(d.channel_id);
                 const message = await channel.messages.fetch(d.id);
                 handleDM(message);
-            } catch (err) {}
+            } catch (err) { }
         }
     }
 });
@@ -227,10 +227,11 @@ async function handleDM(message) {
         if (activeTickets.has(userId)) {
             const ticket = activeTickets.get(userId);
             activeTickets.delete(userId);
-            channelToUser.delete(ticket.channelId);
+            if (ticket.channelId) channelToUser.delete(ticket.channelId);
             pendingPrompts.delete(userId);
             return message.reply("🔄 **Ticket Cache Reset:** Your session has been wiped. You can now open a new ticket.");
         }
+        pendingPrompts.delete(userId);
         return message.reply("🔍 No active ticket found to reset.");
     }
 
@@ -241,41 +242,59 @@ async function handleDM(message) {
         return message.reply(`🔍 **Debug Info:**\nServer ID: \`${ticket.guildId}\`\nChannel ID: \`${ticket.channelId}\`\n\n*If you can't see this channel, the bot might be lacking 'Manage Permissions' in that server!*`);
     }
 
-    // ── !debug Command (Find where the ticket is) ────────
-
     // If user already has an active ticket, forward the message
     if (activeTickets.has(userId)) {
         return forwardUserMessage(message);
     }
 
-    // Find all mutual guilds (Aggressive search to bypass caching issues)
+    // Prevent double-prompting if they are already in a selection flow
+    if (pendingPrompts.has(userId)) return;
+
+    // Find all mutual guilds (Robust search with timeout)
     const mutualGuilds = [];
     const searchTasks = client.guilds.cache.map(async (guild) => {
+        // First check cache (instant)
+        if (guild.members.cache.has(userId)) {
+            mutualGuilds.push(guild);
+            return;
+        }
+        // Then try fetch with a short timeout
         try {
-            const member = await guild.members.fetch(userId).catch(() => null);
+            const member = await guild.members.fetch({ user: userId, cache: true, force: false }).catch(() => null);
             if (member) mutualGuilds.push(guild);
-        } catch (e) {}
+        } catch (e) { }
     });
-    
+
     await Promise.all(searchTasks);
 
-    // If no mutual guilds found, default to the first server the bot is in so the user is never blocked
-    if (mutualGuilds.length === 0 && client.guilds.cache.size > 0) {
-        mutualGuilds.push(client.guilds.cache.first());
+    // If no mutual guilds found, fallback to the configured main guild
+    if (mutualGuilds.length === 0) {
+        const mainGuild = client.guilds.cache.get(CONFIG.guildId) || client.guilds.cache.first();
+        if (mainGuild) {
+            mutualGuilds.push(mainGuild);
+        }
     }
 
+    // Final check: if still no guilds, the bot really can't help
     if (mutualGuilds.length === 0) {
-        // This only happens if the bot is in ZERO servers total
-        return console.log("⚠️ Bot is not in any servers.");
+        return message.reply({
+            embeds: [
+                new EmbedBuilder()
+                    .setTitle('❌  Cannot Start Conversation')
+                    .setDescription("I couldn't find any shared servers between us. Please make sure you are in a server that I am also in before DMing me.")
+                    .setColor(COLORS.CLOSE)
+            ]
+        });
     }
 
     // If multiple guilds, ask which one
     if (mutualGuilds.length > 1) {
+        pendingPrompts.add(userId);
         const menu = new ActionRowBuilder().addComponents(
             new StringSelectMenuBuilder()
                 .setCustomId('ticket_guild_select')
                 .setPlaceholder('Which server do you need help with?')
-                .addOptions(mutualGuilds.map(g => ({
+                .addOptions(mutualGuilds.slice(0, 25).map(g => ({
                     label: g.name,
                     value: g.id,
                     description: `Open a ticket in ${g.name}`
@@ -294,7 +313,7 @@ async function showPrompt(message, guildId) {
     pendingPrompts.add(userId);
 
     const guild = client.guilds.cache.get(guildId);
-    
+
     const promptEmbed = new EmbedBuilder()
         .setTitle('📩  Ticket creation confirmation')
         .setDescription(`Are you sure you would like to open a ticket for **${guild.name}**?`)
@@ -334,7 +353,7 @@ client.on('interactionCreate', async (interaction) => {
     // ── YES — Open Ticket ─────────────────────────────────
     if (interaction.isButton() && interaction.customId.startsWith('ticket_open_yes_')) {
         const guildId = interaction.customId.replace('ticket_open_yes_', '');
-        
+
         if (activeTickets.has(userId)) {
             pendingPrompts.delete(userId);
             return interaction.reply({
@@ -349,7 +368,7 @@ client.on('interactionCreate', async (interaction) => {
             const guild = await client.guilds.fetch(guildId);
             const channels = await guild.channels.fetch();
             const member = await guild.members.fetch(userId).catch(() => null);
-            
+
             // Auto-detect Category and Log channel by NAME
             let category = channels.find(c => c.type === ChannelType.GuildCategory && (c.name.toLowerCase() === 'tickets' || c.name.toLowerCase() === 'support'));
             const logChannel = channels.find(c => c.type === ChannelType.GuildText && (c.name.toLowerCase() === 'ticket-logs' || c.name.toLowerCase() === 'modmail-logs'));
@@ -474,7 +493,7 @@ client.on('interactionCreate', async (interaction) => {
                 if (validPings.length > 0) {
                     const pingMsg = await ticketChannel.send(`${validPings.join(' ')} — New ticket from **${displayName}**`);
                     // Delete the ping after 3 seconds to keep it clean
-                    setTimeout(() => pingMsg.delete().catch(() => {}), 3000);
+                    setTimeout(() => pingMsg.delete().catch(() => { }), 3000);
                 }
             }
 
@@ -498,7 +517,7 @@ client.on('interactionCreate', async (interaction) => {
                 content: `❌ Something went wrong: ${err.message}`,
                 embeds: [],
                 components: []
-            }).catch(() => {});
+            }).catch(() => { });
         }
     }
 
@@ -527,7 +546,7 @@ client.on('interactionCreate', async (interaction) => {
         const claimEmbed = new EmbedBuilder()
             .setDescription(`✅ Ticket claimed by **${interaction.user.username}**. Only they can respond now.`)
             .setColor(COLORS.SUCCESS);
-        
+
         await interaction.reply({ embeds: [claimEmbed] });
     }
 
@@ -560,13 +579,13 @@ client.on('interactionCreate', async (interaction) => {
         const targetId = interaction.values[0];
         const ticketUserId = channelToUser.get(interaction.channel.id);
         const ticket = activeTickets.get(ticketUserId);
-        
+
         if (ticket) ticket.claimedBy = targetId;
 
         const transferEmbed = new EmbedBuilder()
             .setDescription(`🔄 Ticket transferred to <@${targetId}>. Only they can respond now.`)
             .setColor(COLORS.INFO);
-        
+
         await interaction.update({ content: '✅ Transferred!', components: [] });
         await interaction.channel.send({ embeds: [transferEmbed] });
     }
@@ -613,7 +632,7 @@ async function forwardUserMessage(message) {
             .setColor(COLORS.CLOSE) // Red
             .setFooter({ text: 'Member Message' })
             .setTimestamp();
-            
+
         if (files.length > 0) {
             staffScreenEmbed.addFields({ name: '📎 Attachments', value: 'Attached below' });
         }
@@ -635,11 +654,11 @@ async function forwardUserMessage(message) {
             userScreenEmbed.addFields({ name: '📎 Attachments', value: 'Attached below' });
         }
 
-        await message.author.send({ embeds: [userScreenEmbed], files }).catch(() => {});
+        await message.author.send({ embeds: [userScreenEmbed], files }).catch(() => { });
 
     } catch (err) {
         console.error('Failed to forward user message:', err.message);
-        await message.reply('⚠️ Failed to deliver your message. Please try again.').catch(() => {});
+        await message.reply('⚠️ Failed to deliver your message. Please try again.').catch(() => { });
     }
 }
 
@@ -659,9 +678,9 @@ async function handleGuildMessage(message) {
         // Check staff roles (hierarchy)
         const member = message.member || await message.guild.members.fetch(message.author.id).catch(() => null);
         const isStaff = isUserStaff(member, message.guild);
-        
+
         if (!isStaff) {
-            return message.reply('❌ Only staff can close tickets.').catch(() => {});
+            return message.reply('❌ Only staff can close tickets.').catch(() => { });
         }
         return closeTicket(message.channel, message.author);
     }
@@ -670,9 +689,9 @@ async function handleGuildMessage(message) {
     if (message.content.toLowerCase() === '!transcript') {
         const member = message.member || await message.guild.members.fetch(message.author.id).catch(() => null);
         const isStaff = isUserStaff(member, message.guild);
-        
+
         if (!isStaff) {
-            return message.reply('❌ Only staff can generate transcripts.').catch(() => {});
+            return message.reply('❌ Only staff can generate transcripts.').catch(() => { });
         }
         return generateTranscript(message.channel, message.author);
     }
@@ -680,17 +699,17 @@ async function handleGuildMessage(message) {
     // ── !wipe Command (Staff clears a user) ─────────────
     if (message.content.toLowerCase().startsWith('!wipe')) {
         if (!isUserStaff(message.member, message.guild)) return;
-        
+
         const target = message.mentions.users.first();
-        if (!target) return message.reply("❌ Usage: `!wipe @User`").catch(() => {});
+        if (!target) return message.reply("❌ Usage: `!wipe @User`").catch(() => { });
 
         const ticket = activeTickets.get(target.id);
         if (ticket) {
             activeTickets.delete(target.id);
             channelToUser.delete(ticket.channelId);
-            return message.reply(`✅ Wiped ticket cache for **${target.username}**.`).catch(() => {});
+            return message.reply(`✅ Wiped ticket cache for **${target.username}**.`).catch(() => { });
         }
-        return message.reply(`🔍 No active ticket found for **${target.username}**.`).catch(() => {});
+        return message.reply(`🔍 No active ticket found for **${target.username}**.`).catch(() => { });
     }
 
     // ── Ignore unrecognized commands (don't forward to user) ──
@@ -699,21 +718,21 @@ async function handleGuildMessage(message) {
     // ── Staff Reply → Forward as Embed to User DMs ───────
     try {
         const ticket = activeTickets.get(userId);
-        
+
         // CLAIM PROTECTION: If ticket is claimed, only the claimant can talk
         if (ticket.claimedBy && ticket.claimedBy !== message.author.id) {
             // Ignore other staff if claimed, unless admin
             if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) {
-                return message.delete().catch(() => {});
+                return message.delete().catch(() => { });
             }
         }
 
         const user = await client.users.fetch(userId);
-        
+
         // Find Highest Role for Display
         const highestRole = message.member?.roles.highest.name || 'Staff';
         const staffDisplayName = `${message.member?.displayName || message.author.username} • ${highestRole}`;
-        
+
         const finalContent = message.content || message.cleanContent || "*Text content hidden or empty*";
 
         // Handle attachments
@@ -758,11 +777,11 @@ async function handleGuildMessage(message) {
 
         // Replace staff's raw message with the Green embed
         await message.channel.send({ embeds: [staffScreenEmbed], files });
-        await message.delete().catch(() => {});
+        await message.delete().catch(() => { });
 
     } catch (err) {
         console.error('Failed to relay staff message:', err.message);
-        await message.reply('⚠️ Could not deliver message to the user. They may have DMs disabled.').catch(() => {});
+        await message.reply('⚠️ Could not deliver message to the user. They may have DMs disabled.').catch(() => { });
     }
 }
 
@@ -883,7 +902,7 @@ async function generateTranscript(channel, requestedBy) {
 
     } catch (err) {
         console.error('Failed to generate transcript:', err.message);
-        await channel.send('⚠️ Failed to generate transcript.').catch(() => {});
+        await channel.send('⚠️ Failed to generate transcript.').catch(() => { });
     }
 }
 
@@ -923,7 +942,7 @@ client.login(CONFIG.token);
 if (process.env.RENDER_EXTERNAL_HOSTNAME) {
     const hostname = process.env.RENDER_EXTERNAL_HOSTNAME;
     console.log(`📡  Self-ping configured for: https://${hostname}`);
-    
+
     setInterval(() => {
         https.get(`https://${hostname}`, (res) => {
             console.log(`💓  Keep-alive ping sent. Status: ${res.statusCode}`);
