@@ -242,6 +242,46 @@ async function handleDM(message) {
         return message.reply(`🔍 **Debug Info:**\nServer ID: \`${ticket.guildId}\`\nChannel ID: \`${ticket.channelId}\`\n\n*If you can't see this channel, the bot might be lacking 'Manage Permissions' in that server!*`);
     }
 
+    // ── !help Command (List available user commands) ────
+    if (message.content.toLowerCase() === '!help') {
+        const helpEmbed = new EmbedBuilder()
+            .setTitle('📖  Help — Available Commands')
+            .setDescription('Commands you can use in this DM:')
+            .addFields(
+                { name: '`!help`', value: 'Show this help message.' },
+                { name: '`!status`', value: 'Check your current ticket status.' },
+                { name: '`!reset`', value: 'Clear a stuck ticket from your side.' },
+                { name: '`!debug`', value: 'Show where your ticket lives (troubleshooting).' },
+                { name: 'Anything else', value: 'If you have an open ticket, it\'s forwarded to staff. Otherwise I\'ll ask if you want to open one.' }
+            )
+            .setColor(COLORS.INFO)
+            .setFooter({ text: '122 Team • Support System' });
+        return message.reply({ embeds: [helpEmbed] });
+    }
+
+    // ── !status Command (Show ticket status) ────────────
+    if (message.content.toLowerCase() === '!status') {
+        const ticket = activeTickets.get(userId);
+        if (!ticket) {
+            return message.reply({
+                embeds: [new EmbedBuilder()
+                    .setDescription('🔍 You have no active ticket. DM me anything to open one!')
+                    .setColor(COLORS.INFO)]
+            });
+        }
+        const guild = client.guilds.cache.get(ticket.guildId);
+        const statusEmbed = new EmbedBuilder()
+            .setTitle('📋  Your Ticket Status')
+            .setDescription(
+                `**Server:** ${guild ? guild.name : 'Unknown'}\n` +
+                `**Status:** ${ticket.claimedBy ? `Claimed by <@${ticket.claimedBy}>` : 'Awaiting staff response'}`
+            )
+            .setColor(COLORS.SUCCESS)
+            .setFooter({ text: '122 Team • Support System' })
+            .setTimestamp();
+        return message.reply({ embeds: [statusEmbed] });
+    }
+
     // If user already has an active ticket, forward the message
     if (activeTickets.has(userId)) {
         return forwardUserMessage(message);
@@ -731,6 +771,65 @@ async function handleGuildMessage(message) {
             return message.reply(`✅ Wiped ticket cache for **${target.username}**.`).catch(() => { });
         }
         return message.reply(`🔍 No active ticket found for **${target.username}**.`).catch(() => { });
+    }
+
+    // ── !rename Command (Staff renames the ticket channel) ─
+    if (message.content.toLowerCase().startsWith('!rename ')) {
+        if (!isUserStaff(message.member, message.guild)) {
+            return message.reply('❌ Only staff can rename tickets.').catch(() => { });
+        }
+        const rawName = message.content.slice('!rename '.length).trim();
+        const newName = rawName.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 90);
+        if (!newName) return message.reply('❌ Usage: `!rename <new-name>`').catch(() => { });
+        try {
+            await message.channel.setName(`ticket-${newName}`);
+            return message.reply(`✅ Channel renamed to **ticket-${newName}**.`).catch(() => { });
+        } catch (err) {
+            return message.reply(`❌ Failed to rename: ${err.message}`).catch(() => { });
+        }
+    }
+
+    // ── !note Command (Staff-only internal note) ────────
+    if (message.content.toLowerCase().startsWith('!note ')) {
+        if (!isUserStaff(message.member, message.guild)) {
+            return message.reply('❌ Only staff can post internal notes.').catch(() => { });
+        }
+        const noteText = message.content.slice('!note '.length).trim();
+        if (!noteText) return message.reply('❌ Usage: `!note <text>`').catch(() => { });
+
+        const noteEmbed = new EmbedBuilder()
+            .setAuthor({
+                name: `${message.member?.displayName || message.author.username} • Internal Note`,
+                iconURL: message.author.displayAvatarURL()
+            })
+            .setDescription(noteText)
+            .setColor(0xF1C40F) // Yellow — staff-only note
+            .setFooter({ text: '🔒 Not sent to the user' })
+            .setTimestamp();
+
+        await message.channel.send({ embeds: [noteEmbed] });
+        return message.delete().catch(() => { });
+    }
+
+    // ── !add Command (Staff adds a member to the ticket) ─
+    if (message.content.toLowerCase().startsWith('!add')) {
+        if (!isUserStaff(message.member, message.guild)) return;
+
+        const target = message.mentions.users.first();
+        if (!target) return message.reply('❌ Usage: `!add @User`').catch(() => { });
+
+        try {
+            await message.channel.permissionOverwrites.edit(target.id, {
+                ViewChannel: true,
+                SendMessages: true,
+                ReadMessageHistory: true,
+                EmbedLinks: true,
+                AttachFiles: true
+            });
+            return message.reply(`✅ Added **${target.username}** to this ticket.`).catch(() => { });
+        } catch (err) {
+            return message.reply(`❌ Failed to add user: ${err.message}`).catch(() => { });
+        }
     }
 
     // ── Ignore unrecognized commands (don't forward to user) ──
