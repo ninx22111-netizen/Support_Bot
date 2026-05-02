@@ -66,6 +66,17 @@ const activeTickets = new Collection();
 const channelToUser = new Collection();
 // Track users who are currently being prompted
 const pendingPrompts = new Set();
+// Maps: logChannelId -> { messageId, embedJson, transcriptId } for the
+// most-recent ticket-closure log that should stay anchored to the bottom
+// of the log channel. Each new non-self message in that channel deletes
+// the previous copy and re-posts the same embed + button.
+const stickyClosureLogs = new Map();
+// Per-channel lock so concurrent bumpClosureLog calls don't race and
+// orphan duplicate embeds. While a channel ID is in this set, additional
+// triggers are skipped — the in-flight bump will land *after* the new
+// message anyway, since the new message is already in channel history
+// when the replacement is sent.
+const bumpingChannels = new Set();
 
 // ── Config ────────────────────────────────────────────────
 const CONFIG = {
@@ -196,6 +207,31 @@ client.on('messageCreate', async (message) => {
     // Fetch if partial
     if (message.partial) {
         try { await message.fetch(); } catch (err) { return; }
+    }
+
+    // ── Sticky-bottom closure log ────────────────────────
+    // Bump the latest ticket-closure embed back to the bottom on every
+    // human (non-bot) message in the log channel. Bot messages are
+    // skipped to avoid an infinite feedback loop with audit/logger bots
+    // (e.g. Dyno, Carl-bot) that post when messages are
+    // deleted/created — without this guard, each resend would trigger
+    // the audit bot, which would trigger another resend, and so on.
+    if (message.guild && !message.author.bot) {
+        const sticky = stickyClosureLogs.get(message.channel.id);
+        if (
+            sticky &&
+            message.id !== sticky.messageId &&
+            !bumpingChannels.has(message.channel.id)
+        ) {
+            // Fire-and-forget: a slow Discord API call shouldn't block
+            // command processing for the same message. The per-channel
+            // lock prevents concurrent bumps from orphaning a duplicate
+            // embed on rapid-fire messages.
+            bumpingChannels.add(message.channel.id);
+            bumpClosureLog(message.channel, sticky)
+                .catch(err => console.error('Sticky closure-log bump failed:', err.message))
+                .finally(() => bumpingChannels.delete(message.channel.id));
+        }
     }
 
     // Ignore bots
@@ -935,11 +971,46 @@ async function logTicketClose(ticketChannel, user, closedBy, reason = null) {
                 .setStyle(ButtonStyle.Secondary)
         );
 
-        await logChannel.send({ embeds: [logEmbed], components: [buttonRow] });
+        const sentLog = await logChannel.send({ embeds: [logEmbed], components: [buttonRow] });
+
+        // Track this closure log as the new sticky-bottom message for
+        // its log channel. Any previous sticky for this channel stops
+        // being tracked here, but is left in place so its transcript
+        // button keeps working as a regular history entry.
+        stickyClosureLogs.set(logChannel.id, {
+            messageId: sentLog.id,
+            embedJson: logEmbed.toJSON(),
+            transcriptId
+        });
 
     } catch (err) {
         console.error('Failed to log ticket closure:', err.message);
     }
+}
+
+// ============================================
+// STICKY-BOTTOM CLOSURE LOG
+// ============================================
+// Delete the previous closure-log message and re-post an identical
+// embed + transcript button at the bottom of the log channel, so the
+// most-recent closure stays anchored to the bottom.
+async function bumpClosureLog(channel, sticky) {
+    const oldMsg = await channel.messages.fetch(sticky.messageId).catch(() => null);
+    if (oldMsg) await oldMsg.delete().catch(() => { });
+
+    const rebuiltEmbed = EmbedBuilder.from(sticky.embedJson);
+    const rebuiltRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId(`view_transcript_${sticky.transcriptId}`)
+            .setLabel('📄 See the messages')
+            .setStyle(ButtonStyle.Secondary)
+    );
+
+    const newMsg = await channel.send({
+        embeds: [rebuiltEmbed],
+        components: [rebuiltRow]
+    });
+    sticky.messageId = newMsg.id;
 }
 
 // ============================================
