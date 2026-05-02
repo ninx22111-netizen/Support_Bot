@@ -39,7 +39,8 @@ configured in `STAFF_ROLE_ID`.
 | Command  | What it does |
 | -------- | ------------ |
 | `!close` | Closes the current ticket, DMs the user a closure embed, logs to `ticket-logs` / `modmail-logs` (if found) with a "See the messages" transcript button, and deletes the channel after 5 seconds. |
-| `!close <reason>` | **(New this cycle.)** Same as `!close`, but the supplied reason is shown to the user in their closure DM, included in the log-channel embed, and recorded in the saved transcript. Reasons over 500 characters are truncated. |
+| `!close <reason>` | Same as `!close`, but the supplied reason is shown to the user in their closure DM, included in the log-channel embed, and recorded in the saved transcript. Reasons over 500 characters are truncated. |
+| `!areply <message>` | **(New this cycle.)** Anonymous staff reply. The user sees the message from "Support Team" with the bot's avatar — the individual staff member's name is hidden. The staff-channel echo is marked `You (Anonymous)` and its footer records the actual author so other staff have an audit trail. Attachments and claim-protection rules are the same as a normal staff reply, and the original `!areply …` command message is deleted from the ticket channel. |
 | `!transcript` | Generates a plain-text transcript of the last 100 messages in the channel and posts it as a `.txt` attachment. Does not close the ticket. |
 | `!wipe @User` | Clears the bot's cached ticket for the mentioned user. Useful when their ticket channel was already deleted manually. Silent for non-staff. |
 
@@ -85,9 +86,18 @@ visible message.
 - **Auto-detected channels.** When opening a ticket, the bot looks for a
   category named `tickets` or `support` and a log channel named `ticket-logs`
   or `modmail-logs`. Missing categories are auto-created.
-- **`MessageFlags.Ephemeral`.** As of this cycle, all ephemeral interaction
-  replies use `flags: MessageFlags.Ephemeral` instead of the deprecated
+- **`MessageFlags.Ephemeral`.** All ephemeral interaction replies use
+  `flags: MessageFlags.Ephemeral` instead of the deprecated
   `ephemeral: true` shortcut. Behavior is unchanged.
+- **Atomic ticket-open.** As of this cycle, the "Open Ticket" button
+  reserves the user's slot synchronously (in-memory `creatingTickets`
+  Set) before any async Discord API call. Two button clicks that
+  arrive in the same event-loop tick will only ever produce one ticket
+  channel — the second click sees the reservation and replies with
+  the standard "you already have an active ticket" message. The
+  reservation is released in a `finally` block on both success and
+  failure paths, so a failed creation does not leave the user locked
+  out.
 - **Self-ping (Render).** When `RENDER_EXTERNAL_HOSTNAME` is set, the bot
   pings itself every 10 minutes to stay awake. The HTTPS request now has a
   15-second timeout so a hung connection can't leak handles.

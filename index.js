@@ -66,6 +66,15 @@ const activeTickets = new Collection();
 const channelToUser = new Collection();
 // Track users who are currently being prompted
 const pendingPrompts = new Set();
+// Track userIds whose ticket channel is mid-creation. The
+// `activeTickets` map is only populated *after* the channel is
+// created (a multi-step API round-trip), so two button clicks that
+// arrive in quick succession can both pass `activeTickets.has(...)`
+// before either entry exists. We reserve the slot synchronously here
+// — JS adds to a Set atomically within a single event-loop tick — so
+// the second click sees the reservation and bails out with the
+// "already have an active ticket" path.
+const creatingTickets = new Set();
 // Maps: logChannelId -> { messageId, embedJson, transcriptId } for the
 // most-recent ticket-closure log that should stay anchored to the bottom
 // of the log channel. Each new non-self message in that channel deletes
@@ -388,17 +397,30 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.isButton() && interaction.customId.startsWith('ticket_open_yes_')) {
         const guildId = interaction.customId.replace('ticket_open_yes_', '');
 
-        if (activeTickets.has(userId)) {
+        // Atomically reserve the slot. Two rapid clicks would otherwise
+        // both pass `activeTickets.has(...)` before either side managed
+        // to call `activeTickets.set(...)` (channel creation is async),
+        // leaving the user with a duplicate ticket channel. The Set add
+        // below happens in a single event-loop tick, so the second
+        // handler invocation sees the reservation and bails out.
+        if (activeTickets.has(userId) || creatingTickets.has(userId)) {
             pendingPrompts.delete(userId);
             return interaction.reply({
                 content: '⚠️ You already have an active ticket!',
                 flags: MessageFlags.Ephemeral
             });
         }
-
-        await interaction.deferUpdate();
+        creatingTickets.add(userId);
 
         try {
+            // `deferUpdate()` is inside the try so the `finally`
+            // always releases the `creatingTickets` reservation even
+            // if the interaction token expired or the call otherwise
+            // throws — without that, a transient failure here would
+            // permanently lock the user out of opening new tickets
+            // until a bot restart.
+            await interaction.deferUpdate();
+
             const guild = await client.guilds.fetch(guildId);
             const channels = await guild.channels.fetch();
             const member = await guild.members.fetch(userId).catch(() => null);
@@ -552,6 +574,11 @@ client.on('interactionCreate', async (interaction) => {
                 embeds: [],
                 components: []
             }).catch(() => { });
+        } finally {
+            // Release the reservation regardless of outcome. On success
+            // the user is already tracked in `activeTickets`; on
+            // failure they should be free to retry.
+            creatingTickets.delete(userId);
         }
     }
 
@@ -743,6 +770,94 @@ async function handleGuildMessage(message) {
         let reason = message.content.slice('!close'.length).trim();
         if (reason.length > 500) reason = reason.slice(0, 500) + '…';
         return closeTicket(message.channel, message.author, reason || null);
+    }
+
+    // ── !areply Command (Anonymous Staff Reply) ───────────
+    // Usage: `!areply <message>`
+    // Forwards the message to the user as "Support Team" — the
+    // individual staff member's name is hidden from the user. The
+    // staff-channel echo still shows who actually sent it (footer)
+    // so other staff have an audit trail.
+    if (message.content.toLowerCase() === '!areply' || message.content.toLowerCase().startsWith('!areply ')) {
+        const member = message.member || await message.guild.members.fetch(message.author.id).catch(() => null);
+        const isStaff = isUserStaff(member, message.guild);
+
+        if (!isStaff) {
+            return message.reply('❌ Only staff can use anonymous replies.').catch(() => { });
+        }
+
+        const ticket = activeTickets.get(userId);
+
+        // Claim protection: if claimed, only the claimant (or an
+        // admin) can post — same rule as normal staff replies.
+        if (ticket && ticket.claimedBy && ticket.claimedBy !== message.author.id) {
+            if (!member || !member.permissions.has(PermissionFlagsBits.Administrator)) {
+                return message.delete().catch(() => { });
+            }
+        }
+
+        const body = message.content.slice('!areply'.length).trim();
+        const hasAttachments = message.attachments.size > 0;
+        if (!body && !hasAttachments) {
+            return message.reply('❌ Usage: `!areply <message>`').catch(() => { });
+        }
+
+        try {
+            const user = await client.users.fetch(userId);
+            const finalContent = body || '*(attachment only)*';
+
+            // Re-attach any files the staff member uploaded.
+            const files = [];
+            if (hasAttachments) {
+                message.attachments.forEach(a => {
+                    files.push(new AttachmentBuilder(a.url, { name: a.name }));
+                });
+            }
+
+            // RED embed for the user — author is the generic
+            // "Support Team", icon is the bot avatar. No staff name.
+            const userScreenEmbed = new EmbedBuilder()
+                .setAuthor({
+                    name: 'Support Team',
+                    iconURL: client.user.displayAvatarURL()
+                })
+                .setDescription(finalContent)
+                .setColor(COLORS.CLOSE)
+                .setFooter({ text: '122 Team • Staff Response' })
+                .setTimestamp();
+
+            if (files.length > 0) {
+                userScreenEmbed.addFields({ name: '📎 Attachments', value: 'Attached below' });
+            }
+
+            await user.send({ embeds: [userScreenEmbed], files });
+
+            // GREEN echo for the staff channel. Marked "(Anonymous)"
+            // so other staff can see at a glance that this reply went
+            // out without a name. Footer records the actual author.
+            const staffDisplayName = member?.displayName || message.author.username;
+            const staffScreenEmbed = new EmbedBuilder()
+                .setAuthor({
+                    name: 'You (Anonymous)',
+                    iconURL: message.author.displayAvatarURL()
+                })
+                .setDescription(finalContent)
+                .setColor(COLORS.SUCCESS)
+                .setFooter({ text: `Sent anonymously by ${staffDisplayName}` })
+                .setTimestamp();
+
+            if (files.length > 0) {
+                staffScreenEmbed.addFields({ name: '📎 Attachments', value: 'Attached below' });
+            }
+
+            await message.channel.send({ embeds: [staffScreenEmbed], files });
+            await message.delete().catch(() => { });
+
+        } catch (err) {
+            console.error('Failed to relay anonymous staff message:', err.message);
+            await message.reply('⚠️ Could not deliver message to the user. They may have DMs disabled.').catch(() => { });
+        }
+        return;
     }
 
     // ── !transcript Command ───────────────────────────────
