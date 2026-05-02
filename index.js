@@ -66,6 +66,13 @@ const activeTickets = new Collection();
 const channelToUser = new Collection();
 // Track users who are currently being prompted
 const pendingPrompts = new Set();
+// Per-user lock for in-flight ticket creation. Without this, two
+// rapid clicks on the "Open Ticket" confirmation button can both
+// pass the `activeTickets.has(userId)` check before either has
+// finished creating a channel, producing duplicate ticket channels
+// for the same user. The set is checked + populated atomically
+// (synchronously) before any await, and cleared in a `finally`.
+const creatingTickets = new Set();
 // Maps: logChannelId -> { messageId, embedJson, transcriptId } for the
 // most-recent ticket-closure log that should stay anchored to the bottom
 // of the log channel. Each new non-self message in that channel deletes
@@ -388,13 +395,18 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.isButton() && interaction.customId.startsWith('ticket_open_yes_')) {
         const guildId = interaction.customId.replace('ticket_open_yes_', '');
 
-        if (activeTickets.has(userId)) {
+        // Atomic guard: refuse if a ticket already exists OR is currently
+        // being created for this user. The check + add must happen
+        // synchronously (before any await) so two rapid button clicks
+        // can't both pass it. The lock is released in `finally` below.
+        if (activeTickets.has(userId) || creatingTickets.has(userId)) {
             pendingPrompts.delete(userId);
             return interaction.reply({
                 content: '⚠️ You already have an active ticket!',
                 flags: MessageFlags.Ephemeral
             });
         }
+        creatingTickets.add(userId);
 
         await interaction.deferUpdate();
 
@@ -552,6 +564,8 @@ client.on('interactionCreate', async (interaction) => {
                 embeds: [],
                 components: []
             }).catch(() => { });
+        } finally {
+            creatingTickets.delete(userId);
         }
     }
 
@@ -718,6 +732,81 @@ async function forwardUserMessage(message) {
 }
 
 // ============================================
+// FORWARD ANONYMOUS STAFF REPLY → USER DM
+// ============================================
+// Same shape as a normal staff reply, but the user-facing embed shows
+// "Support Team" with no staff name or avatar. The staff-channel echo
+// preserves the real staff name + avatar with an "(anonymous)" marker
+// so other staff can audit who sent it.
+async function forwardAnonymousStaffReply(message, replyText) {
+    const userId = channelToUser.get(message.channel.id);
+    if (!userId) return;
+
+    try {
+        const ticket = activeTickets.get(userId);
+
+        // CLAIM PROTECTION: same as the normal staff reply branch.
+        if (ticket && ticket.claimedBy && ticket.claimedBy !== message.author.id) {
+            const m = message.member
+                || await message.guild.members.fetch(message.author.id).catch(() => null);
+            const isAdmin = m?.permissions?.has(PermissionFlagsBits.Administrator);
+            if (!isAdmin) {
+                return message.delete().catch(() => { });
+            }
+        }
+
+        const user = await client.users.fetch(userId);
+
+        // Handle attachments (mirror forwardUserMessage / staff reply).
+        const files = [];
+        if (message.attachments.size > 0) {
+            message.attachments.forEach(a => {
+                files.push(new AttachmentBuilder(a.url, { name: a.name }));
+            });
+        }
+
+        const finalContent = replyText || '*Text content hidden or empty*';
+
+        // Anonymous embed shown to the user.
+        const userScreenEmbed = new EmbedBuilder()
+            .setAuthor({ name: 'Support Team' })
+            .setDescription(finalContent)
+            .setColor(COLORS.CLOSE) // Red — "other" perspective for the user
+            .setFooter({ text: '122 Team • Support Response' })
+            .setTimestamp();
+
+        if (files.length > 0) {
+            userScreenEmbed.addFields({ name: '📎 Attachments', value: 'Attached below' });
+        }
+
+        await user.send({ embeds: [userScreenEmbed], files });
+
+        // Audit echo for the staff channel — keeps the real staff name so
+        // other staff know who sent the anonymous reply.
+        const staffEchoEmbed = new EmbedBuilder()
+            .setAuthor({
+                name: `${message.author.username} → Support Team (anonymous)`,
+                iconURL: message.author.displayAvatarURL()
+            })
+            .setDescription(finalContent)
+            .setColor(COLORS.SUCCESS) // Green — "self" perspective for staff
+            .setFooter({ text: 'Anonymous staff reply • !areply' })
+            .setTimestamp();
+
+        if (files.length > 0) {
+            staffEchoEmbed.addFields({ name: '📎 Attachments', value: 'Attached below' });
+        }
+
+        await message.channel.send({ embeds: [staffEchoEmbed], files });
+        await message.delete().catch(() => { });
+
+    } catch (err) {
+        console.error('Failed to relay anonymous staff message:', err.message);
+        await message.reply('⚠️ Could not deliver anonymous reply to the user. They may have DMs disabled.').catch(() => { });
+    }
+}
+
+// ============================================
 // HANDLE GUILD MESSAGES (Staff Replies + Commands)
 // ============================================
 async function handleGuildMessage(message) {
@@ -756,6 +845,28 @@ async function handleGuildMessage(message) {
         return generateTranscript(message.channel, message.author);
     }
 
+    // ── !areply Command (Anonymous staff reply) ──────────
+    // Forwards the supplied text to the ticket user as "Support Team"
+    // — no staff name, no avatar — instead of the usual
+    // staff-attributed embed. The staff channel still gets an echo
+    // tagged with the real staff member so other staff can audit who
+    // sent the anonymous reply.
+    if (message.content.toLowerCase() === '!areply'
+        || message.content.toLowerCase().startsWith('!areply ')) {
+        const member = message.member || await message.guild.members.fetch(message.author.id).catch(() => null);
+        const isStaff = isUserStaff(member, message.guild);
+
+        if (!isStaff) {
+            return message.reply('❌ Only staff can use !areply.').catch(() => { });
+        }
+
+        const replyText = message.content.slice('!areply'.length).trim();
+        if (!replyText && message.attachments.size === 0) {
+            return message.reply('❌ Usage: `!areply <message>` — send an anonymous staff reply.').catch(() => { });
+        }
+        return forwardAnonymousStaffReply(message, replyText);
+    }
+
     // ── !wipe Command (Staff clears a user) ─────────────
     if (message.content.toLowerCase().startsWith('!wipe')) {
         if (!isUserStaff(message.member, message.guild)) return;
@@ -781,8 +892,13 @@ async function handleGuildMessage(message) {
 
         // CLAIM PROTECTION: If ticket is claimed, only the claimant can talk
         if (ticket.claimedBy && ticket.claimedBy !== message.author.id) {
-            // Ignore other staff if claimed, unless admin
-            if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) {
+            // Ignore other staff if claimed, unless admin. `message.member`
+            // can be null when the GuildMember partial wasn't resolved, so
+            // fall back to a fresh fetch before reading `.permissions`.
+            const m = message.member
+                || await message.guild.members.fetch(message.author.id).catch(() => null);
+            const isAdmin = m?.permissions?.has(PermissionFlagsBits.Administrator);
+            if (!isAdmin) {
                 return message.delete().catch(() => { });
             }
         }
