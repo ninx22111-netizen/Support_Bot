@@ -39,7 +39,8 @@ configured in `STAFF_ROLE_ID`.
 | Command  | What it does |
 | -------- | ------------ |
 | `!close` | Closes the current ticket, DMs the user a closure embed, logs to `ticket-logs` / `modmail-logs` (if found) with a "See the messages" transcript button, and deletes the channel after 5 seconds. |
-| `!close <reason>` | **(New this cycle.)** Same as `!close`, but the supplied reason is shown to the user in their closure DM, included in the log-channel embed, and recorded in the saved transcript. Reasons over 500 characters are truncated. |
+| `!close <reason>` | Same as `!close`, but the supplied reason is shown to the user in their closure DM, included in the log-channel embed, and recorded in the saved transcript. Reasons over 500 characters are truncated. |
+| `!areply <message>` | **(New this cycle.)** Anonymous staff reply. The user receives the message from "Support Team" with no staff name or avatar. The staff channel still gets an audit echo showing the real staff member who sent it, tagged with `(anonymous)`. Honours claim protection — only the claimant (or an admin) can `!areply` while a ticket is claimed. |
 | `!transcript` | Generates a plain-text transcript of the last 100 messages in the channel and posts it as a `.txt` attachment. Does not close the ticket. |
 | `!wipe @User` | Clears the bot's cached ticket for the mentioned user. Useful when their ticket channel was already deleted manually. Silent for non-staff. |
 
@@ -85,9 +86,13 @@ visible message.
 - **Auto-detected channels.** When opening a ticket, the bot looks for a
   category named `tickets` or `support` and a log channel named `ticket-logs`
   or `modmail-logs`. Missing categories are auto-created.
-- **`MessageFlags.Ephemeral`.** As of this cycle, all ephemeral interaction
-  replies use `flags: MessageFlags.Ephemeral` instead of the deprecated
+- **`MessageFlags.Ephemeral`.** All ephemeral interaction replies use
+  `flags: MessageFlags.Ephemeral` instead of the deprecated
   `ephemeral: true` shortcut. Behavior is unchanged.
+- **Atomic ticket creation.** The "Open Ticket" confirmation button uses
+  a per-user in-flight lock (`creatingTickets`) on top of the existing
+  `activeTickets` check, so two rapid double-clicks can't both pass the
+  guard and create duplicate ticket channels for the same user.
 - **Self-ping (Render).** When `RENDER_EXTERNAL_HOSTNAME` is set, the bot
   pings itself every 10 minutes to stay awake. The HTTPS request now has a
   15-second timeout so a hung connection can't leak handles.
