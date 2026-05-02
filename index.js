@@ -412,9 +412,15 @@ client.on('interactionCreate', async (interaction) => {
         }
         creatingTickets.add(userId);
 
-        await interaction.deferUpdate();
-
         try {
+            // `deferUpdate()` is inside the try so the `finally`
+            // always releases the `creatingTickets` reservation even
+            // if the interaction token expired or the call otherwise
+            // throws — without that, a transient failure here would
+            // permanently lock the user out of opening new tickets
+            // until a bot restart.
+            await interaction.deferUpdate();
+
             const guild = await client.guilds.fetch(guildId);
             const channels = await guild.channels.fetch();
             const member = await guild.members.fetch(userId).catch(() => null);
