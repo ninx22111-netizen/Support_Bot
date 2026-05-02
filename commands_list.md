@@ -39,7 +39,8 @@ configured in `STAFF_ROLE_ID`.
 | Command  | What it does |
 | -------- | ------------ |
 | `!close` | Closes the current ticket, DMs the user a closure embed, logs to `ticket-logs` / `modmail-logs` (if found) with a "See the messages" transcript button, and deletes the channel after 5 seconds. |
-| `!close <reason>` | **(New this cycle.)** Same as `!close`, but the supplied reason is shown to the user in their closure DM, included in the log-channel embed, and recorded in the saved transcript. Reasons over 500 characters are truncated. |
+| `!close <reason>` | Same as `!close`, but the supplied reason is shown to the user in their closure DM, included in the log-channel embed, and recorded in the saved transcript. Reasons over 500 characters are truncated. |
+| `!areply <message>` | **(New this cycle.)** Anonymous staff reply. Forwards `<message>` (and any attachments) to the user as if it came from "Support Team", without exposing the staff member's username. The ticket channel still gets a confirmation embed showing the *real* sender (so other staff know who replied) labelled `(sent as Support Team)`. Subject to claim-protection and staff-role checks just like a normal reply. |
 | `!transcript` | Generates a plain-text transcript of the last 100 messages in the channel and posts it as a `.txt` attachment. Does not close the ticket. |
 | `!wipe @User` | Clears the bot's cached ticket for the mentioned user. Useful when their ticket channel was already deleted manually. Silent for non-staff. |
 
@@ -91,3 +92,13 @@ visible message.
 - **Self-ping (Render).** When `RENDER_EXTERNAL_HOSTNAME` is set, the bot
   pings itself every 10 minutes to stay awake. The HTTPS request now has a
   15-second timeout so a hung connection can't leak handles.
+- **Atomic ticket creation.** As of this cycle, the "Open Ticket" button
+  handler holds a per-user lock (`creatingTickets`) for the entire
+  channel-creation flow. Two rapid clicks no longer race past the
+  `activeTickets.has(userId)` check — the second click hits the lock and is
+  rejected with the standard "you already have an active ticket" reply, so
+  duplicate ticket channels can't be created.
+- **Defensive claim-protection.** The "claimed-ticket" guard for staff
+  replies now uses optional chaining on `message.member` so a partial guild
+  message no longer crashes with `Cannot read properties of null` when
+  checking the Administrator override.
