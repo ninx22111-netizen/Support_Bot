@@ -25,7 +25,11 @@ section.
 ## Features
 
 - [x] `!close <reason>` — capture a free-text reason in the user-facing DM
-      embed, the log-channel embed, and the saved transcript. _(this cycle)_
+      embed, the log-channel embed, and the saved transcript. _(prev cycle)_
+- [x] **Sticky-bottom closure log.** Most-recent closure embed is anchored
+      to the bottom of the log channel — every non-self message in that
+      channel deletes the previous copy and re-posts the same embed +
+      `📄 See the messages` button. _(this cycle)_
 - [ ] `!areply <message>` — staff anonymous reply (forwards as "Support Team"
       without exposing the staff member's name). Standard ModMail feature.
 - [ ] **Subject prompt on open** — collect a short subject line before the
