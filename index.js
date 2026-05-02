@@ -909,6 +909,72 @@ async function closeTicket(channel, closedBy, reason = null) {
 }
 
 // ============================================
+// TRANSCRIPT RENDERING
+// ============================================
+// Render a single Discord Message into one or more lines of transcript
+// text. Staff and user replies are forwarded as embeds (the colored
+// "Member Message" / "Staff Response" cards), so the meaningful text
+// lives in `embed.description` and the real sender lives in
+// `embed.author.name` — using `msg.content` alone would just emit the
+// bot's own ID with a "[Embed/Attachment]" placeholder.
+function renderTranscriptMessage(msg) {
+    const time = new Date(msg.createdTimestamp).toLocaleString();
+    const fallbackAuthor = msg.author.globalName || msg.author.username || 'unknown';
+    const lines = [];
+
+    // Plain text content (commands like `!close`, `!transcript`, `!note`,
+    // and any non-embed staff chat in the channel).
+    const textContent = (msg.content || '').trim();
+    if (textContent) {
+        lines.push(`[${time}] ${fallbackAuthor}: ${textContent}`);
+    }
+
+    // Embeds — each gets its own line. The embed's author.name is the
+    // real human (since the bot itself is `msg.author`).
+    if (msg.embeds && msg.embeds.length > 0) {
+        msg.embeds.forEach(embed => {
+            const speaker = (embed.author && embed.author.name) || fallbackAuthor;
+            const segments = [];
+
+            if (embed.title) segments.push(embed.title.trim());
+            if (embed.description) segments.push(embed.description.trim());
+            if (embed.fields && embed.fields.length > 0) {
+                embed.fields.forEach(f => {
+                    const fname = (f.name || '').trim();
+                    const fval = (f.value || '').trim();
+                    if (fname && fval) segments.push(`${fname}: ${fval}`);
+                });
+            }
+
+            const body = segments.join('\n').trim() || '[empty embed]';
+            // Footer text (e.g. "Member Message", "122 Team • Staff
+            // Response") tags the direction so a reviewer can tell at a
+            // glance whether each line is from the user or staff.
+            const footerTag = embed.footer && embed.footer.text
+                ? ` (${embed.footer.text})`
+                : '';
+            lines.push(`[${time}] ${speaker}${footerTag}: ${body}`);
+        });
+    }
+
+    // Attachments — list URLs so they can be re-fetched after the
+    // ticket channel is gone.
+    if (msg.attachments && msg.attachments.size > 0) {
+        msg.attachments.forEach(a => {
+            const name = a.name || 'attachment';
+            lines.push(`[${time}] ${fallbackAuthor} attached ${name}: ${a.url}`);
+        });
+    }
+
+    // Don't silently drop a message that had nothing renderable.
+    if (lines.length === 0) {
+        lines.push(`[${time}] ${fallbackAuthor}: [empty message]`);
+    }
+
+    return lines.join('\n');
+}
+
+// ============================================
 // LOG TICKET CLOSURE
 // ============================================
 async function logTicketClose(ticketChannel, user, closedBy, reason = null) {
@@ -931,10 +997,7 @@ async function logTicketClose(ticketChannel, user, closedBy, reason = null) {
         transcript += '═'.repeat(50) + '\n\n';
 
         sorted.forEach(msg => {
-            const time = new Date(msg.createdTimestamp).toLocaleString();
-            const author = msg.author.globalName || msg.author.username;
-            const content = msg.content || '[Embed/Attachment]';
-            transcript += `[${time}] ${author}: ${content}\n`;
+            transcript += renderTranscriptMessage(msg) + '\n';
         });
 
         // Save transcript to local file system
@@ -1027,10 +1090,7 @@ async function generateTranscript(channel, requestedBy) {
         transcript += '═'.repeat(50) + '\n\n';
 
         sorted.forEach(msg => {
-            const time = new Date(msg.createdTimestamp).toLocaleString();
-            const author = msg.author.globalName || msg.author.username;
-            const content = msg.content || '[Embed/Attachment]';
-            transcript += `[${time}] ${author}: ${content}\n`;
+            transcript += renderTranscriptMessage(msg) + '\n';
         });
 
         // Send as a text file
