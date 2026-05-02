@@ -21,6 +21,10 @@ section.
       claim-protection branch — partials can be `null`.
 - [ ] Fetch transcript messages with pagination instead of capping at 100 so
       long tickets aren't truncated.
+- [x] Render real embed contents (description / fields / attachment URLs)
+      in the transcript instead of the literal `[Embed/Attachment]`
+      placeholder. Staff and user replies are forwarded as embeds so the
+      placeholder erased the entire conversation. _(this cycle)_
 
 ## Features
 

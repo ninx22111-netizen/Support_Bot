@@ -57,6 +57,25 @@ configured in `STAFF_ROLE_ID`.
 | ------ | ------ |
 | 📄 **See the messages** | Replies with the saved `transcripts/<channelId>.txt` file (ephemeral). Only available while the transcript file still exists on disk. |
 
+### Transcript format
+
+Both `!transcript` and the auto-generated closure transcript render each
+Discord message through a shared helper that:
+
+- Includes the message's plain `content` if any (so commands like
+  `!close resolved` or `!note ...` show up verbatim).
+- For each embed, uses the embed's `author.name` as the speaker (since
+  staff and user replies are forwarded through the bot, the bot's own
+  name is the literal `msg.author`). The embed's `description` plus any
+  `fields` form the body, and the footer (e.g. `Member Message`,
+  `122 Team • Staff Response`) is appended as a parenthetical tag so
+  reviewers can tell direction at a glance.
+- Lists each attachment as a separate line with its CDN URL so
+  attachments can be re-fetched after the ticket channel is gone.
+- Falls back to `[empty message]` only if a message has no content,
+  no embeds, and no attachments — never to a generic
+  `[Embed/Attachment]` placeholder.
+
 ### Sticky-bottom closure log
 
 The most-recent closure log embed is "stuck" to the bottom of its log
