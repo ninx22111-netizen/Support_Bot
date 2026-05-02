@@ -800,6 +800,12 @@ async function handleGuildMessage(message) {
         }
 
         const ticket = activeTickets.get(userId);
+        // The staff-fetch `await` above yields the event loop, so a
+        // concurrent `!close` / `!wipe` can delete the entry while we
+        // were resolving the member. Without this guard, the
+        // `ticket.claimedBy` access below throws `Cannot read
+        // properties of undefined`.
+        if (!ticket) return;
 
         // CLAIM PROTECTION: same rule as normal staff replies — only
         // the claimant (or an admin) can talk in a claimed ticket.
