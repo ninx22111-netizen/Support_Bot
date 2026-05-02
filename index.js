@@ -71,6 +71,12 @@ const pendingPrompts = new Set();
 // of the log channel. Each new non-self message in that channel deletes
 // the previous copy and re-posts the same embed + button.
 const stickyClosureLogs = new Map();
+// Per-channel lock so concurrent bumpClosureLog calls don't race and
+// orphan duplicate embeds. While a channel ID is in this set, additional
+// triggers are skipped — the in-flight bump will land *after* the new
+// message anyway, since the new message is already in channel history
+// when the replacement is sent.
+const bumpingChannels = new Set();
 
 // ── Config ────────────────────────────────────────────────
 const CONFIG = {
@@ -210,12 +216,19 @@ client.on('messageCreate', async (message) => {
     // avoid an infinite loop with the resend.
     if (message.guild && message.author.id !== client.user.id) {
         const sticky = stickyClosureLogs.get(message.channel.id);
-        if (sticky && message.id !== sticky.messageId) {
+        if (
+            sticky &&
+            message.id !== sticky.messageId &&
+            !bumpingChannels.has(message.channel.id)
+        ) {
             // Fire-and-forget: a slow Discord API call shouldn't block
-            // command processing for the same message.
-            bumpClosureLog(message.channel, sticky).catch(err =>
-                console.error('Sticky closure-log bump failed:', err.message)
-            );
+            // command processing for the same message. The per-channel
+            // lock prevents concurrent bumps from orphaning a duplicate
+            // embed on rapid-fire messages.
+            bumpingChannels.add(message.channel.id);
+            bumpClosureLog(message.channel, sticky)
+                .catch(err => console.error('Sticky closure-log bump failed:', err.message))
+                .finally(() => bumpingChannels.delete(message.channel.id));
         }
     }
 
