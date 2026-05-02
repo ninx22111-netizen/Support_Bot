@@ -20,7 +20,8 @@ const {
     Collection,
     AttachmentBuilder,
     UserSelectMenuBuilder,
-    StringSelectMenuBuilder
+    StringSelectMenuBuilder,
+    MessageFlags
 } = require('discord.js');
 
 // ── Web Server for Render ────────────────────────────────
@@ -106,8 +107,6 @@ const COLORS = {
 // ============================================
 // On some hosts/accounts, discord.js drops DM events silently.
 // This catches the raw discord packet and forces the bot to respond.
-const processedMessages = new Set();
-
 client.on('raw', async (packet) => {
     if (packet.t === 'MESSAGE_CREATE') {
         const d = packet.d;
@@ -305,11 +304,10 @@ async function handleDM(message) {
 
     // Only one guild - just prompt for that one
     const selectedGuildId = mutualGuilds[0].id;
-    return showPrompt(message, selectedGuildId);
+    return showPrompt(message, message.author.id, selectedGuildId);
 }
 
-async function showPrompt(message, guildId) {
-    const userId = message.author.id;
+async function showPrompt(replyTarget, userId, guildId) {
     pendingPrompts.add(userId);
 
     const guild = client.guilds.cache.get(guildId);
@@ -332,7 +330,7 @@ async function showPrompt(message, guildId) {
             .setStyle(ButtonStyle.Danger)
     );
 
-    await message.reply({ embeds: [promptEmbed], components: [buttons] });
+    await replyTarget.reply({ embeds: [promptEmbed], components: [buttons] });
 }
 
 // ============================================
@@ -343,7 +341,7 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.isStringSelectMenu() && interaction.customId === 'ticket_guild_select') {
         const guildId = interaction.values[0];
         await interaction.update({ content: '✅ Server selected!', components: [] });
-        return showPrompt(interaction.message, guildId);
+        return showPrompt(interaction.message, interaction.user.id, guildId);
     }
 
     if (!interaction.isButton() && !interaction.isUserSelectMenu()) return;
@@ -358,7 +356,7 @@ client.on('interactionCreate', async (interaction) => {
             pendingPrompts.delete(userId);
             return interaction.reply({
                 content: '⚠️ You already have an active ticket!',
-                ephemeral: true
+                flags: MessageFlags.Ephemeral
             });
         }
 
@@ -464,7 +462,7 @@ client.on('interactionCreate', async (interaction) => {
                 )
                 .setThumbnail(interaction.user.displayAvatarURL({ size: 256 }))
                 .setColor(COLORS.SUCCESS)
-                .setFooter({ text: 'Reply in this channel to respond • !close to close' })
+                .setFooter({ text: 'Reply in this channel to respond • !close [reason] to close' })
                 .setTimestamp();
 
             const controlPanel = new ActionRowBuilder().addComponents(
@@ -537,7 +535,7 @@ client.on('interactionCreate', async (interaction) => {
     // ── CLAIM TICKET ─────────────────────────────────────
     if (interaction.customId === 'ticket_claim') {
         const isStaff = isUserStaff(interaction.member, interaction.guild);
-        if (!isStaff) return interaction.reply({ content: '❌ Staff only.', ephemeral: true });
+        if (!isStaff) return interaction.reply({ content: '❌ Staff only.', flags: MessageFlags.Ephemeral });
 
         const ticketUserId = channelToUser.get(interaction.channel.id);
         const ticket = activeTickets.get(ticketUserId);
@@ -553,7 +551,7 @@ client.on('interactionCreate', async (interaction) => {
     // ── TRANSFER TICKET (Show Menu) ──────────────────────
     if (interaction.customId === 'ticket_transfer') {
         const isStaff = isUserStaff(interaction.member, interaction.guild);
-        if (!isStaff) return interaction.reply({ content: '❌ Staff only.', ephemeral: true });
+        if (!isStaff) return interaction.reply({ content: '❌ Staff only.', flags: MessageFlags.Ephemeral });
 
         const transferMenu = new ActionRowBuilder().addComponents(
             new UserSelectMenuBuilder()
@@ -561,17 +559,17 @@ client.on('interactionCreate', async (interaction) => {
                 .setPlaceholder('Select a staff member to transfer to...')
         );
 
-        await interaction.reply({ content: 'Select who to transfer this ticket to:', components: [transferMenu], ephemeral: true });
+        await interaction.reply({ content: 'Select who to transfer this ticket to:', components: [transferMenu], flags: MessageFlags.Ephemeral });
     }
 
     // ── CLOSE TICKET (Button) ─────────────────────────────
     if (interaction.customId === 'ticket_close') {
         const member = interaction.member;
         const isStaff = isUserStaff(member, interaction.guild);
-        if (!isStaff) return interaction.reply({ content: '❌ Only staff can close tickets.', ephemeral: true });
+        if (!isStaff) return interaction.reply({ content: '❌ Only staff can close tickets.', flags: MessageFlags.Ephemeral });
 
-        await interaction.reply({ content: '🔒 Closing ticket...', ephemeral: true });
-        await closeTicket(interaction.channel, interaction.user);
+        await interaction.reply({ content: '🔒 Closing ticket...', flags: MessageFlags.Ephemeral });
+        await closeTicket(interaction.channel, interaction.user, null);
     }
 
     // ── TRANSFER SELECT (Handle Selection) ────────────────
@@ -601,12 +599,12 @@ client.on('interactionCreate', async (interaction) => {
             await interaction.reply({
                 content: '📄 Here is the transcript for this ticket:',
                 files: [filePath],
-                ephemeral: true
+                flags: MessageFlags.Ephemeral
             });
         } else {
             await interaction.reply({
                 content: '❌ Sorry, the transcript for this ticket is no longer available.',
-                ephemeral: true
+                flags: MessageFlags.Ephemeral
             });
         }
     }
@@ -695,7 +693,8 @@ async function handleGuildMessage(message) {
     if (message.author.bot) return;
 
     // ── !close Command ────────────────────────────────────
-    if (message.content.toLowerCase() === '!close') {
+    // Usage: `!close` or `!close <reason>`
+    if (message.content.toLowerCase() === '!close' || message.content.toLowerCase().startsWith('!close ')) {
         // Check staff roles (hierarchy)
         const member = message.member || await message.guild.members.fetch(message.author.id).catch(() => null);
         const isStaff = isUserStaff(member, message.guild);
@@ -703,7 +702,11 @@ async function handleGuildMessage(message) {
         if (!isStaff) {
             return message.reply('❌ Only staff can close tickets.').catch(() => { });
         }
-        return closeTicket(message.channel, message.author);
+
+        // Extract optional reason; trim and clamp so we don't blow embed limits.
+        let reason = message.content.slice('!close'.length).trim();
+        if (reason.length > 500) reason = reason.slice(0, 500) + '…';
+        return closeTicket(message.channel, message.author, reason || null);
     }
 
     // ── !transcript Command ───────────────────────────────
@@ -809,7 +812,7 @@ async function handleGuildMessage(message) {
 // ============================================
 // CLOSE TICKET
 // ============================================
-async function closeTicket(channel, closedBy) {
+async function closeTicket(channel, closedBy, reason = null) {
     const userId = channelToUser.get(channel.id);
     if (!userId) return;
 
@@ -827,12 +830,16 @@ async function closeTicket(channel, closedBy) {
             .setFooter({ text: `Closed by ${closedByName}` })
             .setTimestamp();
 
+        if (reason) {
+            closeEmbed.addFields({ name: 'Reason', value: reason });
+        }
+
         await user.send({ embeds: [closeEmbed] }).catch(() => {
             console.log(`Could not notify user ${userId} about ticket closure (DMs may be closed).`);
         });
 
         // Log to log channel dynamically
-        await logTicketClose(channel, user, closedBy);
+        await logTicketClose(channel, user, closedBy, reason);
 
         // Clean up tracking
         activeTickets.delete(userId);
@@ -844,6 +851,10 @@ async function closeTicket(channel, closedBy) {
             .setDescription(`Closed by ${closedByName}. This channel will be deleted in 5 seconds.`)
             .setColor(COLORS.CLOSE)
             .setTimestamp();
+
+        if (reason) {
+            closingEmbed.addFields({ name: 'Reason', value: reason });
+        }
 
         await channel.send({ embeds: [closingEmbed] });
 
@@ -864,7 +875,7 @@ async function closeTicket(channel, closedBy) {
 // ============================================
 // LOG TICKET CLOSURE
 // ============================================
-async function logTicketClose(ticketChannel, user, closedBy) {
+async function logTicketClose(ticketChannel, user, closedBy, reason = null) {
     try {
         const guild = ticketChannel.guild;
         const channels = await guild.channels.fetch();
@@ -879,6 +890,7 @@ async function logTicketClose(ticketChannel, user, closedBy) {
         let transcript = `📋 TRANSCRIPT — #${ticketChannel.name}\n`;
         transcript += `User: ${user.globalName || user.username} (${user.id})\n`;
         transcript += `Closed by: ${closedBy.globalName || closedBy.username}\n`;
+        if (reason) transcript += `Reason: ${reason}\n`;
         transcript += `Date: ${new Date().toISOString()}\n`;
         transcript += '═'.repeat(50) + '\n\n';
 
@@ -909,7 +921,8 @@ async function logTicketClose(ticketChannel, user, closedBy) {
             .setDescription(
                 `**User:** ${userName} (\`${user.id}\`)\n` +
                 `**Closed By:** ${closedByName}\n` +
-                `**Channel:** #${ticketChannel.name}`
+                `**Channel:** #${ticketChannel.name}` +
+                (reason ? `\n**Reason:** ${reason}` : '')
             )
             .setColor(COLORS.INFO)
             .setTimestamp();
@@ -1003,9 +1016,15 @@ if (process.env.RENDER_EXTERNAL_HOSTNAME) {
     console.log(`📡  Self-ping configured for: https://${hostname}`);
 
     setInterval(() => {
-        https.get(`https://${hostname}`, (res) => {
+        const req = https.get(`https://${hostname}`, (res) => {
             console.log(`💓  Keep-alive ping sent. Status: ${res.statusCode}`);
-        }).on('error', (err) => {
+            // Drain the response so the socket can be reused / closed.
+            res.resume();
+        });
+        req.setTimeout(15000, () => {
+            req.destroy(new Error('Keep-alive request timed out'));
+        });
+        req.on('error', (err) => {
             console.error('⚠️  Keep-alive ping failed:', err.message);
         });
     }, 10 * 60 * 1000); // 10 minutes
