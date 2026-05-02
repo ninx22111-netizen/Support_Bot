@@ -60,7 +60,7 @@ configured in `STAFF_ROLE_ID`.
 ### Sticky-bottom closure log
 
 The most-recent closure log embed is "stuck" to the bottom of its log
-channel. Whenever any other (non-bot-self) message is posted in the log
+channel. Whenever a **human** (non-bot) message is posted in the log
 channel, the bot deletes its previous copy of that embed and re-posts an
 identical one at the bottom, so the latest closure is always the last
 visible message.
@@ -69,8 +69,12 @@ visible message.
   ticket closes, the previous closure stops being sticky and stays in
   place as a regular history entry. Its `📄 See the messages` button
   keeps working.
-- Skipping bot-self messages prevents the bot's own resend from
-  triggering an infinite loop.
+- Bot-authored messages (including the bot's own resend, *and* other
+  audit/logger bots) are intentionally ignored. This breaks the
+  feedback loop where an audit bot posts in response to the
+  delete/send → triggers another bump → etc.
+- A per-channel `bumpingChannels` lock prevents two rapid messages
+  from racing through the bump and orphaning a duplicate embed.
 - The sticky tracking lives in memory only and is reset on restart;
   the next closure starts a fresh sticky.
 

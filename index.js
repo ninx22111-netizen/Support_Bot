@@ -211,10 +211,12 @@ client.on('messageCreate', async (message) => {
 
     // ── Sticky-bottom closure log ────────────────────────
     // Bump the latest ticket-closure embed back to the bottom on every
-    // non-self message in the log channel. Runs *before* the bot filter
-    // so other bots' messages also bump it; we only skip our own ID to
-    // avoid an infinite loop with the resend.
-    if (message.guild && message.author.id !== client.user.id) {
+    // human (non-bot) message in the log channel. Bot messages are
+    // skipped to avoid an infinite feedback loop with audit/logger bots
+    // (e.g. Dyno, Carl-bot) that post when messages are
+    // deleted/created — without this guard, each resend would trigger
+    // the audit bot, which would trigger another resend, and so on.
+    if (message.guild && !message.author.bot) {
         const sticky = stickyClosureLogs.get(message.channel.id);
         if (
             sticky &&
