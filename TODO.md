@@ -13,12 +13,12 @@ section.
 - [x] Drop the unused `processedMessages` Set declared next to the raw-gateway
       hijack. _(this cycle)_
 - [x] Add a 15s timeout to the Render keep-alive `https.get` request. _(this cycle)_
-- [ ] Make the `activeTickets.has(userId)` check in the "open ticket" button
+- [x] Make the `activeTickets.has(userId)` check in the "open ticket" button
       handler atomic. Today, two button clicks that arrive in quick succession
-      can both pass the check before either creates a channel.
-- [ ] Defensively null-check `message.member` before reading
+      can both pass the check before either creates a channel. _(this cycle)_
+- [x] Defensively null-check `message.member` before reading
       `member.permissions.has(PermissionFlagsBits.Administrator)` in the
-      claim-protection branch — partials can be `null`.
+      claim-protection branch — partials can be `null`. _(this cycle)_
 - [ ] Fetch transcript messages with pagination instead of capping at 100 so
       long tickets aren't truncated.
 
@@ -30,8 +30,9 @@ section.
       to the bottom of the log channel — every non-self message in that
       channel deletes the previous copy and re-posts the same embed +
       `📄 See the messages` button. _(this cycle)_
-- [ ] `!areply <message>` — staff anonymous reply (forwards as "Support Team"
+- [x] `!areply <message>` — staff anonymous reply (forwards as "Support Team"
       without exposing the staff member's name). Standard ModMail feature.
+      _(this cycle)_
 - [ ] **Subject prompt on open** — collect a short subject line before the
       ticket channel is created and embed it in the opening message.
 - [ ] **Slash commands.** Migrate the user-facing `!help` / `!status` (see
