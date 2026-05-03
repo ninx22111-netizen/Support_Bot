@@ -79,14 +79,91 @@ const stickyClosureLogs = new Map();
 const bumpingChannels = new Set();
 
 // ── Config ────────────────────────────────────────────────
+// Comma-separated list of acceptable category / log-channel names. The
+// first entry of `ticketCategoryNames` is also used as the *display* name
+// when the bot has to auto-create the category from scratch.
+const DEFAULT_TICKET_CATEGORY_NAMES = ['tickets', 'support'];
+const DEFAULT_LOG_CHANNEL_NAMES = ['ticket-logs', 'modmail-logs'];
+
+function parseNameList(envValue, fallback) {
+    if (!envValue) return fallback;
+    const parsed = envValue
+        .split(',')
+        .map(name => name.trim().toLowerCase())
+        .filter(name => name);
+    return parsed.length ? parsed : fallback;
+}
+
 const CONFIG = {
     token: process.env.DISCORD_TOKEN,
     guildId: process.env.GUILD_ID,
     // Support multiple staff roles (comma-separated)
     staffRoleIds: (process.env.STAFF_ROLE_ID || '').split(',').map(id => id.trim()).filter(id => id),
     ticketCategoryId: process.env.TICKET_CATEGORY_ID || null,
-    logChannelId: process.env.LOG_CHANNEL_ID || null
+    logChannelId: process.env.LOG_CHANNEL_ID || null,
+    ticketCategoryNames: parseNameList(process.env.TICKET_CATEGORY_NAMES, DEFAULT_TICKET_CATEGORY_NAMES),
+    logChannelNames: parseNameList(process.env.LOG_CHANNEL_NAMES, DEFAULT_LOG_CHANNEL_NAMES)
 };
+
+// ── Channel auto-detect helpers ───────────────────────────
+// Both helpers honour the explicit pinned-ID env vars first
+// (`TICKET_CATEGORY_ID`, `LOG_CHANNEL_ID`); if the ID isn't set, isn't
+// in `channels`, or doesn't match the expected channel type, they fall
+// back to the case-insensitive name lists from `TICKET_CATEGORY_NAMES`
+// / `LOG_CHANNEL_NAMES`. This matches the behaviour documented in
+// `commands_list.md`'s env-var table.
+function findTicketCategory(channels) {
+    if (CONFIG.ticketCategoryId) {
+        const byId = channels.get
+            ? channels.get(CONFIG.ticketCategoryId)
+            : channels.find(c => c && c.id === CONFIG.ticketCategoryId);
+        if (byId && byId.type === ChannelType.GuildCategory) return byId;
+    }
+    return channels.find(c =>
+        c &&
+        c.type === ChannelType.GuildCategory &&
+        CONFIG.ticketCategoryNames.includes(c.name.toLowerCase())
+    );
+}
+
+function findLogChannel(channels) {
+    if (CONFIG.logChannelId) {
+        const byId = channels.get
+            ? channels.get(CONFIG.logChannelId)
+            : channels.find(c => c && c.id === CONFIG.logChannelId);
+        if (byId && byId.type === ChannelType.GuildText) return byId;
+    }
+    return channels.find(c =>
+        c &&
+        c.type === ChannelType.GuildText &&
+        CONFIG.logChannelNames.includes(c.name.toLowerCase())
+    );
+}
+
+// ── Paginated message fetch ───────────────────────────────
+// Discord caps `channel.messages.fetch` at 100 messages per request, so
+// long tickets used to be silently truncated in transcripts. This helper
+// pages backwards from the newest message using `before:` until the
+// channel runs out (or `hardCap` is reached as a safety net) and returns
+// the messages sorted oldest→newest.
+async function fetchAllChannelMessages(channel, hardCap = 5000) {
+    const collected = [];
+    let beforeId;
+    while (collected.length < hardCap) {
+        const options = { limit: 100 };
+        if (beforeId) options.before = beforeId;
+        // eslint-disable-next-line no-await-in-loop
+        const batch = await channel.messages.fetch(options).catch(() => null);
+        if (!batch || batch.size === 0) break;
+        // discord.js returns a Collection sorted newest→oldest; convert to
+        // a plain array so we can both append and grab the oldest ID.
+        const batchArr = Array.from(batch.values());
+        collected.push(...batchArr);
+        if (batch.size < 100) break;
+        beforeId = batchArr[batchArr.length - 1].id;
+    }
+    return collected.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+}
 
 // ── Staff Verification Helper ─────────────────────────────
 function isUserStaff(member, guild) {
@@ -152,7 +229,7 @@ client.once('ready', async () => {
     console.log(`📁  Ticket Category: ${CONFIG.ticketCategoryId || 'None (top of server)'}`);
     console.log(`🔌  WebSocket Status: ${client.ws.status}`);
     console.log(`🏠  Servers: ${client.guilds.cache.size} (Multi-Guild Active)`);
-    console.log(`📡  Mode: Auto-Detect "Tickets" & "modmail-logs"`);
+    console.log(`📡  Mode: Auto-Detect category=[${CONFIG.ticketCategoryNames.join(', ')}] log=[${CONFIG.logChannelNames.join(', ')}]`);
     console.log(`⏱️  Ping: ${client.ws.ping}ms\n`);
 
     client.user.setPresence({
@@ -404,14 +481,17 @@ client.on('interactionCreate', async (interaction) => {
             const member = await guild.members.fetch(userId).catch(() => null);
 
             // Auto-detect Category and Log channel by NAME
-            let category = channels.find(c => c.type === ChannelType.GuildCategory && (c.name.toLowerCase() === 'tickets' || c.name.toLowerCase() === 'support'));
-            const logChannel = channels.find(c => c.type === ChannelType.GuildText && (c.name.toLowerCase() === 'ticket-logs' || c.name.toLowerCase() === 'modmail-logs'));
+            let category = findTicketCategory(channels);
+            const logChannel = findLogChannel(channels);
 
-            // If no category found, TRY TO CREATE ONE
+            // If no category found, TRY TO CREATE ONE. Use the first
+            // configured category name (capitalized) as the display name.
             if (!category) {
                 try {
+                    const newCategoryName = CONFIG.ticketCategoryNames[0]
+                        .replace(/^./, ch => ch.toUpperCase());
                     category = await guild.channels.create({
-                        name: 'Tickets',
+                        name: newCategoryName,
                         type: ChannelType.GuildCategory,
                         permissionOverwrites: [{ id: guild.id, deny: [PermissionFlagsBits.ViewChannel] }]
                     });
@@ -915,13 +995,13 @@ async function logTicketClose(ticketChannel, user, closedBy, reason = null) {
     try {
         const guild = ticketChannel.guild;
         const channels = await guild.channels.fetch();
-        const logChannel = channels.find(c => c.type === ChannelType.GuildText && (c.name.toLowerCase() === 'ticket-logs' || c.name.toLowerCase() === 'modmail-logs'));
+        const logChannel = findLogChannel(channels);
 
         if (!logChannel) return;
 
-        // Generate Transcript before channel is deleted
-        const messages = await ticketChannel.messages.fetch({ limit: 100 });
-        const sorted = messages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+        // Generate Transcript before channel is deleted. Pagination keeps
+        // long tickets from being truncated at 100 messages.
+        const sorted = await fetchAllChannelMessages(ticketChannel);
 
         let transcript = `📋 TRANSCRIPT — #${ticketChannel.name}\n`;
         transcript += `User: ${user.globalName || user.username} (${user.id})\n`;
@@ -1018,8 +1098,7 @@ async function bumpClosureLog(channel, sticky) {
 // ============================================
 async function generateTranscript(channel, requestedBy) {
     try {
-        const messages = await channel.messages.fetch({ limit: 100 });
-        const sorted = messages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+        const sorted = await fetchAllChannelMessages(channel);
 
         let transcript = `📋 TRANSCRIPT — #${channel.name}\n`;
         transcript += `Generated by: ${requestedBy.globalName || requestedBy.username}\n`;

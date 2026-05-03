@@ -85,9 +85,34 @@ visible message.
 - **Auto-detected channels.** When opening a ticket, the bot looks for a
   category named `tickets` or `support` and a log channel named `ticket-logs`
   or `modmail-logs`. Missing categories are auto-created.
+  - **(New this cycle.)** Both name lists are configurable via env:
+    `TICKET_CATEGORY_NAMES` and `LOG_CHANNEL_NAMES` accept a
+    comma-separated list (case-insensitive) and fall back to the
+    defaults above if unset or empty. The first entry of
+    `TICKET_CATEGORY_NAMES` is also used (capitalized) as the display
+    name when the bot has to auto-create the ticket category.
 - **`MessageFlags.Ephemeral`.** As of this cycle, all ephemeral interaction
   replies use `flags: MessageFlags.Ephemeral` instead of the deprecated
   `ephemeral: true` shortcut. Behavior is unchanged.
 - **Self-ping (Render).** When `RENDER_EXTERNAL_HOSTNAME` is set, the bot
   pings itself every 10 minutes to stay awake. The HTTPS request now has a
   15-second timeout so a hung connection can't leak handles.
+- **Transcript pagination.** _(New this cycle.)_ Both the closure
+  transcript saved to `transcripts/<channelId>.txt` and the `!transcript`
+  command now page through `channel.messages.fetch` until the channel is
+  exhausted (capped at 5,000 messages as a safety net). Long tickets are
+  no longer truncated to the most recent 100 messages.
+
+## Environment variables
+
+| Variable | Required | What it does |
+| -------- | -------- | ------------ |
+| `DISCORD_TOKEN` | yes | Bot token from the Discord developer portal. The bot exits with `❌ No bot token found!` if unset. |
+| `GUILD_ID` | yes | Primary server ID. Required even in multi-guild mode. |
+| `STAFF_ROLE_ID` | yes | Comma-separated staff role IDs. Anyone whose highest role ranks at or above any of these is treated as staff. |
+| `TICKET_CATEGORY_ID` | no | Pin tickets to a specific category ID (overrides auto-detection by name). |
+| `LOG_CHANNEL_ID` | no | Pin closure logs to a specific channel ID (overrides auto-detection by name). |
+| `TICKET_CATEGORY_NAMES` | no | Comma-separated list of acceptable category names for auto-detection. Defaults to `tickets,support`. The first entry is also used as the display name when auto-creating the category. |
+| `LOG_CHANNEL_NAMES` | no | Comma-separated list of acceptable log-channel names for auto-detection. Defaults to `ticket-logs,modmail-logs`. |
+| `PORT` | no | Express keep-alive port. Defaults to `3000`. |
+| `RENDER_EXTERNAL_HOSTNAME` | no | When set, the bot pings `https://<hostname>` every 10 minutes (15s timeout) to keep Render's free tier awake. |
