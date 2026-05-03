@@ -85,9 +85,29 @@ visible message.
 - **Auto-detected channels.** When opening a ticket, the bot looks for a
   category named `tickets` or `support` and a log channel named `ticket-logs`
   or `modmail-logs`. Missing categories are auto-created.
-- **`MessageFlags.Ephemeral`.** As of this cycle, all ephemeral interaction
-  replies use `flags: MessageFlags.Ephemeral` instead of the deprecated
-  `ephemeral: true` shortcut. Behavior is unchanged.
+- **`MessageFlags.Ephemeral`.** As of a previous cycle, all ephemeral
+  interaction replies use `flags: MessageFlags.Ephemeral` instead of the
+  deprecated `ephemeral: true` shortcut. Behavior is unchanged.
 - **Self-ping (Render).** When `RENDER_EXTERNAL_HOSTNAME` is set, the bot
-  pings itself every 10 minutes to stay awake. The HTTPS request now has a
+  pings itself every 10 minutes to stay awake. The HTTPS request has a
   15-second timeout so a hung connection can't leak handles.
+- **DM cooldown / spam protection (this cycle).** Pre-ticket DMs are
+  rate-limited per user. Defaults: **5 messages per 10 seconds**. The
+  first message past the threshold gets a single `⏳ You're sending
+  messages too quickly` reply; further DMs in that window are silently
+  dropped until the window resets. The cooldown is **skipped once a
+  ticket is open**, so normal back-and-forth forwarding is never
+  throttled. Tunables (env vars):
+  - `DM_COOLDOWN_THRESHOLD` — max pre-ticket DMs per window (default `5`).
+  - `DM_COOLDOWN_WINDOW_MS` — window length in milliseconds (default `10000`).
+- **Claim-protection null-safety (this cycle).** When a ticket is
+  claimed, the "ignore non-claimant staff" branch now uses optional
+  chaining on `message.member?.permissions?.has(...)`, so a partial
+  guild member no longer crashes the message handler.
+- **Raw-gateway DM hijack errors (this cycle).** The `client.on('raw',
+  ...)` fallback used to swallow all errors with `catch (err) { }`,
+  hiding real rate-limit / `Unknown Channel` failures. Errors are now
+  logged via `console.error` so they surface in Render's log stream.
+- **Debug typing log (this cycle).** The per-keystroke `[DEBUG TYPING]`
+  line is now gated behind `DEBUG_TYPING=1` so production logs aren't
+  spammed; set the env var when actively diagnosing dropped DM events.
