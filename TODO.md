@@ -16,9 +16,14 @@ section.
 - [ ] Make the `activeTickets.has(userId)` check in the "open ticket" button
       handler atomic. Today, two button clicks that arrive in quick succession
       can both pass the check before either creates a channel.
-- [ ] Defensively null-check `message.member` before reading
+- [x] Defensively null-check `message.member` before reading
       `member.permissions.has(PermissionFlagsBits.Administrator)` in the
-      claim-protection branch — partials can be `null`.
+      claim-protection branch — partials can be `null`. _(this cycle)_
+- [x] Stop swallowing errors from the raw-gateway DM hijack — `catch (err) {}`
+      hid real rate-limit / `Unknown Channel` failures. Now logged via
+      `console.error`. _(this cycle)_
+- [x] Gate the per-keystroke `[DEBUG TYPING]` console log behind `DEBUG_TYPING=1`
+      so production logs aren't spammed. _(this cycle)_
 - [ ] Fetch transcript messages with pagination instead of capping at 100 so
       long tickets aren't truncated.
 
@@ -44,8 +49,12 @@ section.
 - [ ] **Configurable category / log-channel names.** Auto-detect currently
       hard-codes `tickets` / `support` and `ticket-logs` / `modmail-logs` —
       expose via env.
-- [ ] **Cooldown / spam protection** for users who DM the bot in bursts before
-      a ticket is open.
+- [x] **Cooldown / spam protection** for users who DM the bot in bursts before
+      a ticket is open. Tunable via `DM_COOLDOWN_THRESHOLD` (default `5`) and
+      `DM_COOLDOWN_WINDOW_MS` (default `10000`); sends one warning per window
+      and silently drops follow-up DMs until the window expires. Skipped once
+      a ticket exists so legitimate forwarding is never throttled.
+      _(this cycle)_
 
 ## Documentation / DX
 

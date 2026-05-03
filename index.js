@@ -77,6 +77,13 @@ const stickyClosureLogs = new Map();
 // message anyway, since the new message is already in channel history
 // when the replacement is sent.
 const bumpingChannels = new Set();
+// DM cooldown for users who burst-DM the bot before a ticket is open.
+// Maps: userId -> { count, windowStart, warned }. Once a user crosses
+// `DM_COOLDOWN_THRESHOLD` messages inside `DM_COOLDOWN_WINDOW_MS`, the
+// bot sends a single rate-limit notice and silently drops further
+// pre-ticket DMs until the window resets. The cooldown does NOT apply
+// once a ticket is open — those DMs are forwarded normally.
+const dmCooldowns = new Map();
 
 // ── Config ────────────────────────────────────────────────
 const CONFIG = {
@@ -87,6 +94,53 @@ const CONFIG = {
     ticketCategoryId: process.env.TICKET_CATEGORY_ID || null,
     logChannelId: process.env.LOG_CHANNEL_ID || null
 };
+
+// ── DM Cooldown Tunables ──────────────────────────────────
+// Keep the defaults conservative — most legitimate users won't trip
+// these thresholds, but a copy-paste flood or repeated `!reset` spam
+// will. Both are overridable via env vars.
+const DM_COOLDOWN_THRESHOLD = parseInt(process.env.DM_COOLDOWN_THRESHOLD || '5', 10);
+const DM_COOLDOWN_WINDOW_MS = parseInt(process.env.DM_COOLDOWN_WINDOW_MS || '10000', 10);
+// Periodically prune expired cooldown entries so the map doesn't grow
+// unbounded. Uses the same 1-hour cadence as `processedMessageIds`.
+setInterval(() => {
+    const now = Date.now();
+    for (const [userId, state] of dmCooldowns) {
+        if (now - state.windowStart > DM_COOLDOWN_WINDOW_MS * 6) {
+            dmCooldowns.delete(userId);
+        }
+    }
+}, 1000 * 60 * 60);
+
+// Returns true when the user is currently rate-limited and the message
+// should be dropped. Sends a single warning DM the first time the
+// threshold is crossed inside the active window, then silently drops
+// follow-up messages until the window expires.
+function isDmRateLimited(message) {
+    const userId = message.author.id;
+    const now = Date.now();
+    const state = dmCooldowns.get(userId);
+
+    if (!state || now - state.windowStart > DM_COOLDOWN_WINDOW_MS) {
+        dmCooldowns.set(userId, { count: 1, windowStart: now, warned: false });
+        return false;
+    }
+
+    state.count += 1;
+
+    if (state.count <= DM_COOLDOWN_THRESHOLD) return false;
+
+    if (!state.warned) {
+        state.warned = true;
+        const remainingMs = Math.max(0, DM_COOLDOWN_WINDOW_MS - (now - state.windowStart));
+        const seconds = Math.ceil(remainingMs / 1000);
+        message.reply(
+            `⏳ **You're sending messages too quickly.** Please wait about ${seconds}s before trying again, ` +
+            `or open a ticket first so your messages are forwarded to staff.`
+        ).catch(() => { });
+    }
+    return true;
+}
 
 // ── Staff Verification Helper ─────────────────────────────
 function isUserStaff(member, guild) {
@@ -132,7 +186,13 @@ client.on('raw', async (packet) => {
                 const channel = await client.channels.fetch(d.channel_id);
                 const message = await channel.messages.fetch(d.id);
                 handleDM(message);
-            } catch (err) { }
+            } catch (err) {
+                // Silently dropping these errors hid real issues
+                // (rate limits, missing access, unknown channel) for a
+                // long time. Log at debug level so they show up in
+                // console output without aborting other DM handling.
+                console.error('[RAW DM HIJACK] Failed to process DM packet:', err.message);
+            }
         }
     }
 });
@@ -194,9 +254,14 @@ async function rebuildTicketCache() {
 // ============================================
 // HANDLE DEBUG TYPING (Diagnosing DM drops)
 // ============================================
-client.on('typingStart', (typing) => {
-    console.log(`[DEBUG TYPING] ${typing.user?.username || 'Someone'} is typing in a ${typing.channel?.type === ChannelType.DM ? 'DM' : 'Server Channel'}`);
-});
+// Gated behind DEBUG_TYPING=1 so production logs aren't spammed with a
+// line for every keystroke. Set the env var when actively diagnosing
+// dropped DM events.
+if (process.env.DEBUG_TYPING === '1') {
+    client.on('typingStart', (typing) => {
+        console.log(`[DEBUG TYPING] ${typing.user?.username || 'Someone'} is typing in a ${typing.channel?.type === ChannelType.DM ? 'DM' : 'Server Channel'}`);
+    });
+}
 
 // ============================================
 // HANDLE DIRECT MESSAGES
@@ -256,6 +321,13 @@ async function handleDM(message) {
     processedMessageIds.add(message.id);
 
     const userId = message.author.id;
+
+    // Cooldown / spam protection for users who DM the bot in bursts
+    // before a ticket is open. Skip the rate-limit gate entirely once a
+    // ticket exists — those DMs are forwarded normally below — but
+    // apply it to `!reset` / `!debug` / plain DMs so we can't be
+    // flooded into replying repeatedly to the same user.
+    if (!activeTickets.has(userId) && isDmRateLimited(message)) return;
 
     // ── !reset Command (Clear own ghost ticket) ─────────
     if (message.content.toLowerCase() === '!reset') {
@@ -781,8 +853,12 @@ async function handleGuildMessage(message) {
 
         // CLAIM PROTECTION: If ticket is claimed, only the claimant can talk
         if (ticket.claimedBy && ticket.claimedBy !== message.author.id) {
-            // Ignore other staff if claimed, unless admin
-            if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) {
+            // Ignore other staff if claimed, unless admin. `message.member`
+            // can be null on partial guild messages — fall back to "not
+            // admin" rather than crashing with `Cannot read properties of
+            // null (reading 'permissions')`.
+            const isAdmin = message.member?.permissions?.has(PermissionFlagsBits.Administrator) === true;
+            if (!isAdmin) {
                 return message.delete().catch(() => { });
             }
         }
