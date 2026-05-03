@@ -6,13 +6,6 @@ section.
 
 ## Stability / bugs
 
-- [x] Fix `showPrompt` adding the **bot's** ID to `pendingPrompts` when called
-      from the server-picker dropdown — should add the user's ID. _(this cycle)_
-- [x] Replace deprecated `ephemeral: true` with
-      `flags: MessageFlags.Ephemeral`. _(this cycle)_
-- [x] Drop the unused `processedMessages` Set declared next to the raw-gateway
-      hijack. _(this cycle)_
-- [x] Add a 15s timeout to the Render keep-alive `https.get` request. _(this cycle)_
 - [ ] Make the `activeTickets.has(userId)` check in the "open ticket" button
       handler atomic. Today, two button clicks that arrive in quick succession
       can both pass the check before either creates a channel.
@@ -21,19 +14,35 @@ section.
       claim-protection branch — partials can be `null`.
 - [ ] Fetch transcript messages with pagination instead of capping at 100 so
       long tickets aren't truncated.
+- [x] Add a TTL to `pendingPrompts` so users who walk away from a
+      server-picker / confirmation / subject-modal prompt aren't
+      permanently locked out of the DM → ticket flow until they run
+      `!reset`. Entries older than 5 minutes are now treated as
+      expired and pruned on read + on a periodic interval. _(this cycle)_
+- [x] Fix `showPrompt` adding the **bot's** ID to `pendingPrompts` when called
+      from the server-picker dropdown — should add the user's ID. _(prev cycle)_
+- [x] Replace deprecated `ephemeral: true` with
+      `flags: MessageFlags.Ephemeral`. _(prev cycle)_
+- [x] Drop the unused `processedMessages` Set declared next to the raw-gateway
+      hijack. _(prev cycle)_
+- [x] Add a 15s timeout to the Render keep-alive `https.get` request. _(prev cycle)_
 
 ## Features
 
+- [x] **Subject prompt on open** — clicking **Open Ticket** now opens
+      a modal with a single optional `Subject` field (max 100 chars).
+      The submitted subject is rendered as a `📝 Subject` field in
+      both the user-facing `✅ Ticket Opened!` confirmation embed and
+      the staff-side `📬 New Support Ticket` opening embed.
+      _(this cycle)_
 - [x] `!close <reason>` — capture a free-text reason in the user-facing DM
       embed, the log-channel embed, and the saved transcript. _(prev cycle)_
 - [x] **Sticky-bottom closure log.** Most-recent closure embed is anchored
       to the bottom of the log channel — every non-self message in that
       channel deletes the previous copy and re-posts the same embed +
-      `📄 See the messages` button. _(this cycle)_
+      `📄 See the messages` button. _(prev cycle)_
 - [ ] `!areply <message>` — staff anonymous reply (forwards as "Support Team"
       without exposing the staff member's name). Standard ModMail feature.
-- [ ] **Subject prompt on open** — collect a short subject line before the
-      ticket channel is created and embed it in the opening message.
 - [ ] **Slash commands.** Migrate the user-facing `!help` / `!status` (see
       PR #1) and the staff `!close` / `!transcript` to real Discord slash
       commands so they show up in autocomplete. Will need a registration

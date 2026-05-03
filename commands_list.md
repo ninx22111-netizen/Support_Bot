@@ -28,6 +28,23 @@ the staff ticket channel as an embed.
 - **Open Ticket / No Thanks** — confirmation buttons before a ticket is
   created.
 
+### Subject prompt on ticket open
+
+**(New this cycle.)** Clicking **Open Ticket** now opens a small modal
+asking for an optional **subject** line (max 100 characters) before
+the ticket channel is created. The subject — when provided — is shown
+in:
+
+- the user's `✅ Ticket Opened!` confirmation embed (DM), and
+- the `📬 New Support Ticket` opening embed in the staff ticket
+  channel,
+
+so staff see what the ticket is about at a glance. Leaving the
+subject blank and submitting the modal works exactly like the old
+flow — no subject field is shown anywhere. Cancelling the modal
+without submitting leaves the original confirmation prompt + buttons
+in place; clicking **Open Ticket** again re-opens the modal.
+
 ---
 
 ## Staff commands (inside a ticket channel)
@@ -91,3 +108,10 @@ visible message.
 - **Self-ping (Render).** When `RENDER_EXTERNAL_HOSTNAME` is set, the bot
   pings itself every 10 minutes to stay awake. The HTTPS request now has a
   15-second timeout so a hung connection can't leak handles.
+- **Pending-prompt TTL.** **(New this cycle.)** The `pendingPrompts`
+  registry — which gates duplicate server-picker / confirmation /
+  subject-modal prompts so users don't get two copies — now expires
+  entries after **5 minutes**. Previously a user who clicked away from
+  the prompt without submitting was permanently locked out of the DM
+  → ticket flow until they ran `!reset`. Stale entries are pruned on
+  read and on a 5-minute interval.
