@@ -21,6 +21,9 @@ const {
     AttachmentBuilder,
     UserSelectMenuBuilder,
     StringSelectMenuBuilder,
+    ModalBuilder,
+    TextInputBuilder,
+    TextInputStyle,
     MessageFlags
 } = require('discord.js');
 
@@ -64,8 +67,33 @@ setInterval(() => processedMessageIds.clear(), 1000 * 60 * 60);
 const activeTickets = new Collection();
 // Maps: channelId -> userId (reverse lookup for staff replies)
 const channelToUser = new Collection();
-// Track users who are currently being prompted
-const pendingPrompts = new Set();
+// Track users who are currently being prompted (server-picker dropdown,
+// open-ticket confirmation embed, or subject modal). Map of
+// userId -> timestamp (ms) of when the prompt was issued. Entries older
+// than PENDING_PROMPT_TTL_MS are treated as expired so users aren't
+// permanently locked out of starting a new ticket if they walk away
+// from a prompt without submitting it. Stale entries are pruned on
+// read by isPendingPromptActive() and on a periodic interval below.
+const pendingPrompts = new Map();
+const PENDING_PROMPT_TTL_MS = 5 * 60 * 1000;
+
+function isPendingPromptActive(userId) {
+    const ts = pendingPrompts.get(userId);
+    if (!ts) return false;
+    if (Date.now() - ts >= PENDING_PROMPT_TTL_MS) {
+        pendingPrompts.delete(userId);
+        return false;
+    }
+    return true;
+}
+
+setInterval(() => {
+    const now = Date.now();
+    for (const [userId, ts] of pendingPrompts) {
+        if (now - ts >= PENDING_PROMPT_TTL_MS) pendingPrompts.delete(userId);
+    }
+}, PENDING_PROMPT_TTL_MS);
+
 // Maps: logChannelId -> { messageId, embedJson, transcriptId } for the
 // most-recent ticket-closure log that should stay anchored to the bottom
 // of the log channel. Each new non-self message in that channel deletes
@@ -283,7 +311,7 @@ async function handleDM(message) {
     }
 
     // Prevent double-prompting if they are already in a selection flow
-    if (pendingPrompts.has(userId)) return;
+    if (isPendingPromptActive(userId)) return;
 
     // Find all mutual guilds (Robust search with timeout)
     const mutualGuilds = [];
@@ -324,7 +352,7 @@ async function handleDM(message) {
 
     // If multiple guilds, ask which one
     if (mutualGuilds.length > 1) {
-        pendingPrompts.add(userId);
+        pendingPrompts.set(userId, Date.now());
         const menu = new ActionRowBuilder().addComponents(
             new StringSelectMenuBuilder()
                 .setCustomId('ticket_guild_select')
@@ -344,7 +372,7 @@ async function handleDM(message) {
 }
 
 async function showPrompt(replyTarget, userId, guildId) {
-    pendingPrompts.add(userId);
+    pendingPrompts.set(userId, Date.now());
 
     const guild = client.guilds.cache.get(guildId);
 
@@ -380,11 +408,19 @@ client.on('interactionCreate', async (interaction) => {
         return showPrompt(interaction.message, interaction.user.id, guildId);
     }
 
-    if (!interaction.isButton() && !interaction.isUserSelectMenu()) return;
+    if (
+        !interaction.isButton() &&
+        !interaction.isUserSelectMenu() &&
+        !interaction.isModalSubmit()
+    ) return;
 
     const userId = interaction.user.id;
 
-    // ── YES — Open Ticket ─────────────────────────────────
+    // ── YES — Open Ticket → show "Subject" modal ──────────
+    // The Open Ticket button no longer creates the ticket directly.
+    // It opens a small modal that collects an optional subject line,
+    // and the modal-submit handler below does the actual creation
+    // with the subject embedded in the opening message.
     if (interaction.isButton() && interaction.customId.startsWith('ticket_open_yes_')) {
         const guildId = interaction.customId.replace('ticket_open_yes_', '');
 
@@ -396,6 +432,44 @@ client.on('interactionCreate', async (interaction) => {
             });
         }
 
+        const subjectModal = new ModalBuilder()
+            .setCustomId(`ticket_subject_${guildId}`)
+            .setTitle('Open a Support Ticket')
+            .addComponents(
+                new ActionRowBuilder().addComponents(
+                    new TextInputBuilder()
+                        .setCustomId('subject')
+                        .setLabel('Subject (optional)')
+                        .setStyle(TextInputStyle.Short)
+                        .setMaxLength(100)
+                        .setRequired(false)
+                        .setPlaceholder('e.g. "Account recovery"')
+                )
+            );
+
+        // Refresh the pending-prompt timestamp so the user isn't
+        // counted as idle while the modal is open in front of them.
+        pendingPrompts.set(userId, Date.now());
+        return interaction.showModal(subjectModal);
+    }
+
+    // ── Subject modal submitted → actually create the ticket ─
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('ticket_subject_')) {
+        const guildId = interaction.customId.replace('ticket_subject_', '');
+        const rawSubject = interaction.fields.getTextInputValue('subject') || '';
+        const subject = rawSubject.trim().slice(0, 100);
+
+        if (activeTickets.has(userId)) {
+            pendingPrompts.delete(userId);
+            return interaction.reply({
+                content: '⚠️ You already have an active ticket!',
+                flags: MessageFlags.Ephemeral
+            });
+        }
+
+        // deferUpdate() (vs deferReply) edits the original button
+        // message in place, matching the previous button-only flow
+        // — the confirmation embed replaces the prompt embed.
         await interaction.deferUpdate();
 
         try {
@@ -501,6 +575,10 @@ client.on('interactionCreate', async (interaction) => {
                 .setFooter({ text: 'Reply in this channel to respond • !close [reason] to close' })
                 .setTimestamp();
 
+            if (subject) {
+                openEmbed.addFields({ name: '📝 Subject', value: subject });
+            }
+
             const controlPanel = new ActionRowBuilder().addComponents(
                 new ButtonBuilder()
                     .setCustomId('ticket_claim')
@@ -541,6 +619,10 @@ client.on('interactionCreate', async (interaction) => {
                 .setColor(COLORS.SUCCESS)
                 .setFooter({ text: '122 Team • Support System' })
                 .setTimestamp();
+
+            if (subject) {
+                confirmEmbed.addFields({ name: '📝 Subject', value: subject });
+            }
 
             await interaction.editReply({ embeds: [confirmEmbed], components: [] });
 
