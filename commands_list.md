@@ -39,7 +39,8 @@ configured in `STAFF_ROLE_ID`.
 | Command  | What it does |
 | -------- | ------------ |
 | `!close` | Closes the current ticket, DMs the user a closure embed, logs to `ticket-logs` / `modmail-logs` (if found) with a "See the messages" transcript button, and deletes the channel after 5 seconds. |
-| `!close <reason>` | **(New this cycle.)** Same as `!close`, but the supplied reason is shown to the user in their closure DM, included in the log-channel embed, and recorded in the saved transcript. Reasons over 500 characters are truncated. |
+| `!close <reason>` | Same as `!close`, but the supplied reason is shown to the user in their closure DM, included in the log-channel embed, and recorded in the saved transcript. Reasons over 500 characters are truncated. |
+| `!areply <message>` | **(New this cycle.)** Anonymous staff reply. Forwards `<message>` to the ticket user's DM as "Support Team" (using the bot's avatar) instead of the individual staff member. The ticket channel still echoes the reply with the real staff member's name so other staff can see who actually sent it. Respects the existing claim protection (only the claimant or an admin can post while a ticket is claimed). Attachments on the staff message are forwarded too. |
 | `!transcript` | Generates a plain-text transcript of the last 100 messages in the channel and posts it as a `.txt` attachment. Does not close the ticket. |
 | `!wipe @User` | Clears the bot's cached ticket for the mentioned user. Useful when their ticket channel was already deleted manually. Silent for non-staff. |
 
@@ -85,6 +86,12 @@ visible message.
 - **Auto-detected channels.** When opening a ticket, the bot looks for a
   category named `tickets` or `support` and a log channel named `ticket-logs`
   or `modmail-logs`. Missing categories are auto-created.
+- **Single-channel-per-user guarantee.** The "Open Ticket" button handler
+  now claims an in-flight slot in the same synchronous block as the
+  "do you already have a ticket?" check, so two button clicks that
+  arrive in quick succession can no longer race past the guard and
+  create two channels for the same user. The slot is always released
+  in a `finally`, even when channel creation throws.
 - **`MessageFlags.Ephemeral`.** As of this cycle, all ephemeral interaction
   replies use `flags: MessageFlags.Ephemeral` instead of the deprecated
   `ephemeral: true` shortcut. Behavior is unchanged.
