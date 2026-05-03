@@ -17,6 +17,7 @@ ticket flow.
 | _(any DM)_ | Anyone in a mutual server | If you have no active ticket, the bot replies with a confirmation prompt (and a server picker if you share more than one server with the bot). Confirming opens a new ticket. |
 | `!reset` | Anyone | Wipes any "ghost" ticket cache the bot still holds for **you** (e.g., if a ticket channel was deleted manually). |
 | `!debug` | Anyone | Replies with the server ID and channel ID of your current ticket — useful when troubleshooting permissions. |
+| `!ping` | Anyone | **(New this cycle.)** Lightweight health check. Replies with a Pong embed showing the gateway WebSocket latency, the REST round-trip latency, and bot uptime. Always answers — works with or without an active ticket and never opens a new one. |
 
 If you already have an active ticket, every other DM you send is forwarded to
 the staff ticket channel as an embed.
@@ -41,7 +42,7 @@ configured in `STAFF_ROLE_ID`.
 | `!close` | Closes the current ticket, DMs the user a closure embed, logs to `ticket-logs` / `modmail-logs` (if found) with a "See the messages" transcript button, and deletes the channel after 5 seconds. |
 | `!close <reason>` | **(New this cycle.)** Same as `!close`, but the supplied reason is shown to the user in their closure DM, included in the log-channel embed, and recorded in the saved transcript. Reasons over 500 characters are truncated. |
 | `!transcript` | Generates a plain-text transcript of the last 100 messages in the channel and posts it as a `.txt` attachment. Does not close the ticket. |
-| `!wipe @User` | Clears the bot's cached ticket for the mentioned user. Useful when their ticket channel was already deleted manually. Silent for non-staff. |
+| `!wipe @User` | Clears the bot's cached ticket for the mentioned user. Useful when their ticket channel was already deleted manually. Silent for non-staff. Match is now exact `!wipe` / `!wipe ` so messages like `!wiped` no longer trigger the handler. _(this cycle)_ |
 
 ### Buttons shown in the ticket channel
 
@@ -91,3 +92,13 @@ visible message.
 - **Self-ping (Render).** When `RENDER_EXTERNAL_HOSTNAME` is set, the bot
   pings itself every 10 minutes to stay awake. The HTTPS request now has a
   15-second timeout so a hung connection can't leak handles.
+- **Ticket cache rebuild (topic validation).** _(this cycle)_ On startup
+  the bot scans every guild for `ticket-*` channels and uses each
+  channel's **topic** as the ticket-owner's user ID. As of this cycle,
+  the topic must match a Discord snowflake (17–20 digits) before the
+  channel is bound to that user — admins or other bots that overwrite
+  the topic with free text (e.g. "high-priority") no longer corrupt the
+  cache silently. Skipped channels are counted in a single startup log
+  line (`⚠️ Skipped N ticket-* channel(s) whose topic isn't a Discord
+  user ID.`). If your team relies on a custom topic format, restore the
+  user-ID topic or it will be ignored on the next restart.

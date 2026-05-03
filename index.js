@@ -168,20 +168,37 @@ client.once('ready', async () => {
 // ============================================
 // REBUILD TICKET CACHE ON RESTART
 // ============================================
+// A Discord snowflake is a 17–20 digit numeric ID. We validate the topic
+// matches this shape before treating it as a userId in rebuildTicketCache,
+// so an admin manually editing a ticket channel topic (e.g. to "high-priority"
+// or "ticket about Bob's account") cannot silently corrupt the cache by
+// binding garbage strings as `userId` keys — which previously broke the
+// "DM me to open a ticket" flow until the bot was restarted again with the
+// topic restored.
+const SNOWFLAKE_RE = /^\d{17,20}$/;
+
 // Scans for existing ticket channels so the bot survives restarts
 async function rebuildTicketCache() {
     activeTickets.clear();
     channelToUser.clear();
+    let skippedBadTopic = 0;
     try {
         for (const [guildId, guild] of client.guilds.cache) {
             const channels = await guild.channels.fetch().catch(() => new Collection());
             channels.forEach(channel => {
                 if (channel && channel.name && channel.name.startsWith('ticket-') && channel.topic) {
-                    const userId = channel.topic;
+                    const userId = channel.topic.trim();
+                    if (!SNOWFLAKE_RE.test(userId)) {
+                        skippedBadTopic++;
+                        return;
+                    }
                     activeTickets.set(userId, { channelId: channel.id, guildId: guild.id });
                     channelToUser.set(channel.id, userId);
                 }
             });
+        }
+        if (skippedBadTopic > 0) {
+            console.log(`⚠️ Skipped ${skippedBadTopic} ticket-* channel(s) whose topic isn't a Discord user ID.`);
         }
         if (activeTickets.size > 0) {
             console.log(`🔄 Rebuilt ${activeTickets.size} ticket(s) from ${client.guilds.cache.size} servers.`);
@@ -277,6 +294,15 @@ async function handleDM(message) {
         return message.reply(`🔍 **Debug Info:**\nServer ID: \`${ticket.guildId}\`\nChannel ID: \`${ticket.channelId}\`\n\n*If you can't see this channel, the bot might be lacking 'Manage Permissions' in that server!*`);
     }
 
+    // ── !ping Command (Health check) ─────────────────────
+    // Lightweight diagnostic — anyone with a mutual server can DM `!ping`
+    // to verify the bot is alive and see gateway/REST latency. Does NOT
+    // open a ticket and is allowed even when the user already has one
+    // open (intentional: it's the one DM that should always answer).
+    if (message.content.toLowerCase() === '!ping') {
+        return sendPongReply(message);
+    }
+
     // If user already has an active ticket, forward the message
     if (activeTickets.has(userId)) {
         return forwardUserMessage(message);
@@ -341,6 +367,64 @@ async function handleDM(message) {
     // Only one guild - just prompt for that one
     const selectedGuildId = mutualGuilds[0].id;
     return showPrompt(message, message.author.id, selectedGuildId);
+}
+
+// ============================================
+// PING / HEALTH CHECK REPLY
+// ============================================
+// Sends an embed with bot uptime, gateway WebSocket latency, and the
+// round-trip latency to Discord's REST API (measured by editing the reply
+// after it lands). Useful for the operational "environment test" step,
+// and as a low-cost alive-check anyone can run from DMs.
+function formatUptime(uptimeMs) {
+    const totalSec = Math.floor(uptimeMs / 1000);
+    const days = Math.floor(totalSec / 86400);
+    const hours = Math.floor((totalSec % 86400) / 3600);
+    const minutes = Math.floor((totalSec % 3600) / 60);
+    const seconds = totalSec % 60;
+    const parts = [];
+    if (days) parts.push(`${days}d`);
+    if (hours || days) parts.push(`${hours}h`);
+    if (minutes || hours || days) parts.push(`${minutes}m`);
+    parts.push(`${seconds}s`);
+    return parts.join(' ');
+}
+
+async function sendPongReply(message) {
+    const wsPing = client.ws.ping; // gateway heartbeat ping (ms, may be -1 pre-handshake)
+    const uptime = client.uptime != null ? formatUptime(client.uptime) : 'unknown';
+
+    const initialEmbed = new EmbedBuilder()
+        .setTitle('🏓  Pong!')
+        .setColor(COLORS.INFO)
+        .addFields(
+            { name: 'Gateway (WebSocket)', value: wsPing >= 0 ? `${Math.round(wsPing)}ms` : 'pending', inline: true },
+            { name: 'REST round-trip',     value: '…',                                                inline: true },
+            { name: 'Uptime',              value: uptime,                                              inline: true }
+        )
+        .setFooter({ text: '122 Team • Support System' })
+        .setTimestamp();
+
+    let reply;
+    try {
+        reply = await message.reply({ embeds: [initialEmbed] });
+    } catch (err) {
+        console.error('[!ping] Failed to send pong reply:', err.message);
+        return;
+    }
+
+    // Round-trip = when our reply landed on Discord minus when the user's
+    // DM landed on Discord. Negative values can occur briefly if clocks
+    // drift; clamp to 0 for display.
+    const restPing = Math.max(0, reply.createdTimestamp - message.createdTimestamp);
+    const finalEmbed = EmbedBuilder.from(initialEmbed.toJSON())
+        .setFields(
+            { name: 'Gateway (WebSocket)', value: wsPing >= 0 ? `${Math.round(wsPing)}ms` : 'pending', inline: true },
+            { name: 'REST round-trip',     value: `${restPing}ms`,                                    inline: true },
+            { name: 'Uptime',              value: uptime,                                              inline: true }
+        );
+
+    await reply.edit({ embeds: [finalEmbed] }).catch(() => { });
 }
 
 async function showPrompt(replyTarget, userId, guildId) {
@@ -757,7 +841,10 @@ async function handleGuildMessage(message) {
     }
 
     // ── !wipe Command (Staff clears a user) ─────────────
-    if (message.content.toLowerCase().startsWith('!wipe')) {
+    // Match `!wipe` exactly or `!wipe ` (with a space) — previously
+    // `startsWith('!wipe')` also matched `!wiped`, `!wipethis`, etc.
+    const wipeContent = message.content.toLowerCase();
+    if (wipeContent === '!wipe' || wipeContent.startsWith('!wipe ')) {
         if (!isUserStaff(message.member, message.guild)) return;
 
         const target = message.mentions.users.first();

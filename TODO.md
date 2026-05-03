@@ -12,7 +12,17 @@ section.
       `flags: MessageFlags.Ephemeral`. _(this cycle)_
 - [x] Drop the unused `processedMessages` Set declared next to the raw-gateway
       hijack. _(this cycle)_
-- [x] Add a 15s timeout to the Render keep-alive `https.get` request. _(this cycle)_
+- [x] Add a 15s timeout to the Render keep-alive `https.get` request. _(prev cycle)_
+- [x] Validate `channel.topic` is a Discord snowflake before binding it as
+      `userId` in `rebuildTicketCache`. Previously, an admin or audit bot
+      that overwrote a `ticket-*` channel's topic (e.g. "high-priority")
+      silently corrupted the in-memory cache on restart, breaking the
+      "DM me to open a ticket" flow for that user until the topic was
+      restored. Bad topics are now skipped and counted in a single startup
+      log line. _(this cycle)_
+- [x] Tighten `!wipe` prefix matching to require exactly `!wipe` or `!wipe `
+      (with a space). Previously `startsWith('!wipe')` also fired on
+      `!wiped`, `!wipethis`, etc. _(this cycle)_
 - [ ] Make the `activeTickets.has(userId)` check in the "open ticket" button
       handler atomic. Today, two button clicks that arrive in quick succession
       can both pass the check before either creates a channel.
@@ -29,7 +39,11 @@ section.
 - [x] **Sticky-bottom closure log.** Most-recent closure embed is anchored
       to the bottom of the log channel — every non-self message in that
       channel deletes the previous copy and re-posts the same embed +
-      `📄 See the messages` button. _(this cycle)_
+      `📄 See the messages` button. _(prev cycle)_
+- [x] **`!ping` health-check command** — anyone can DM `!ping` to get a
+      Pong embed showing gateway WebSocket latency, REST round-trip
+      latency, and bot uptime. Useful for the operational "environment
+      test" step and as a low-cost alive-check. _(this cycle)_
 - [ ] `!areply <message>` — staff anonymous reply (forwards as "Support Team"
       without exposing the staff member's name). Standard ModMail feature.
 - [ ] **Subject prompt on open** — collect a short subject line before the
