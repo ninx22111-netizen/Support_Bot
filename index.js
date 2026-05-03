@@ -106,7 +106,19 @@ const CONFIG = {
 };
 
 // ── Channel auto-detect helpers ───────────────────────────
+// Both helpers honour the explicit pinned-ID env vars first
+// (`TICKET_CATEGORY_ID`, `LOG_CHANNEL_ID`); if the ID isn't set, isn't
+// in `channels`, or doesn't match the expected channel type, they fall
+// back to the case-insensitive name lists from `TICKET_CATEGORY_NAMES`
+// / `LOG_CHANNEL_NAMES`. This matches the behaviour documented in
+// `commands_list.md`'s env-var table.
 function findTicketCategory(channels) {
+    if (CONFIG.ticketCategoryId) {
+        const byId = channels.get
+            ? channels.get(CONFIG.ticketCategoryId)
+            : channels.find(c => c && c.id === CONFIG.ticketCategoryId);
+        if (byId && byId.type === ChannelType.GuildCategory) return byId;
+    }
     return channels.find(c =>
         c &&
         c.type === ChannelType.GuildCategory &&
@@ -115,6 +127,12 @@ function findTicketCategory(channels) {
 }
 
 function findLogChannel(channels) {
+    if (CONFIG.logChannelId) {
+        const byId = channels.get
+            ? channels.get(CONFIG.logChannelId)
+            : channels.find(c => c && c.id === CONFIG.logChannelId);
+        if (byId && byId.type === ChannelType.GuildText) return byId;
+    }
     return channels.find(c =>
         c &&
         c.type === ChannelType.GuildText &&
