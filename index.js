@@ -43,9 +43,7 @@ const client = new Client({
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.DirectMessages,
         GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildMembers,
-        GatewayIntentBits.DirectMessageTyping,
-        GatewayIntentBits.GuildMessageTyping
+        GatewayIntentBits.GuildMembers
     ],
     partials: [
         Partials.Channel,
@@ -190,13 +188,6 @@ async function rebuildTicketCache() {
         console.error('⚠️ Rebuild error:', err.message);
     }
 }
-
-// ============================================
-// HANDLE DEBUG TYPING (Diagnosing DM drops)
-// ============================================
-client.on('typingStart', (typing) => {
-    console.log(`[DEBUG TYPING] ${typing.user?.username || 'Someone'} is typing in a ${typing.channel?.type === ChannelType.DM ? 'DM' : 'Server Channel'}`);
-});
 
 // ============================================
 // HANDLE DIRECT MESSAGES

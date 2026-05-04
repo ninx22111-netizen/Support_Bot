@@ -89,5 +89,15 @@ visible message.
   replies use `flags: MessageFlags.Ephemeral` instead of the deprecated
   `ephemeral: true` shortcut. Behavior is unchanged.
 - **Self-ping (Render).** When `RENDER_EXTERNAL_HOSTNAME` is set, the bot
-  pings itself every 10 minutes to stay awake. The HTTPS request now has a
+  pings itself every 10 minutes to stay awake. The HTTPS request has a
   15-second timeout so a hung connection can't leak handles.
+- **Gateway intents.** As of this cycle, `DirectMessageTyping` and
+  `GuildMessageTyping` are no longer requested. They were originally
+  added for a `[DEBUG TYPING]` console listener used while diagnosing
+  the DM-drop bug. The listener was retired in this cycle to remove
+  per-keystroke log spam, and the matching intents went with it.
+- **Smoke test (`npm test`).** Spawns `node index.js` three times with
+  `DISCORD_TOKEN` / `GUILD_ID` / `STAFF_ROLE_ID` selectively unset and
+  asserts the bot exits 1 with the documented missing-cred error each
+  time. Run this before a deploy if you've touched the cold-boot
+  validation block at the bottom of `index.js`.
