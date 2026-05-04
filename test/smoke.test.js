@@ -8,9 +8,10 @@
 // The test spawns the main entrypoint as a child process so the real
 // `client.login()` is exercised exactly the way Render runs it; it is
 // not a unit test and does not hit the Discord API. It deliberately
-// scrubs DISCORD_TOKEN / GUILD_ID / STAFF_ROLE_ID from the child's env
+// blanks DISCORD_TOKEN / GUILD_ID / STAFF_ROLE_ID in the child's env
 // so the assertions are stable on a developer machine that has those
-// set in `.env`.
+// set in `.env` — see the comment on `childEnv` below for why we set
+// them to '' instead of `delete`-ing them.
 
 const { spawn } = require('child_process');
 const path = require('path');
@@ -37,13 +38,17 @@ const cases = [
 
 function runCase(c) {
     return new Promise((resolve, reject) => {
-        // Strip the three creds from the parent env, then layer on the
-        // case's overrides. This isolates the test from a populated
-        // local `.env`.
+        // Blank the three creds in the parent env, then layer on the
+        // case's overrides. We set to '' instead of `delete`-ing because
+        // index.js calls `require('dotenv').config()` on startup, which
+        // by default only fills *undefined* env vars — so deleting them
+        // would let dotenv re-populate from a real `.env` and defeat the
+        // isolation. An empty string is *defined* (so dotenv leaves it
+        // alone) but still falsy for the validation block in index.js.
         const childEnv = { ...process.env };
-        delete childEnv.DISCORD_TOKEN;
-        delete childEnv.GUILD_ID;
-        delete childEnv.STAFF_ROLE_ID;
+        childEnv.DISCORD_TOKEN = '';
+        childEnv.GUILD_ID = '';
+        childEnv.STAFF_ROLE_ID = '';
         Object.assign(childEnv, c.env);
 
         const child = spawn(process.execPath, [ENTRY], {
