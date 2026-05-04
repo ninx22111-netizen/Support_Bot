@@ -12,7 +12,12 @@ section.
       `flags: MessageFlags.Ephemeral`. _(this cycle)_
 - [x] Drop the unused `processedMessages` Set declared next to the raw-gateway
       hijack. _(this cycle)_
-- [x] Add a 15s timeout to the Render keep-alive `https.get` request. _(this cycle)_
+- [x] Add a 15s timeout to the Render keep-alive `https.get` request. _(prev cycle)_
+- [x] Drop the leftover `typingStart` debug listener (and the
+      `Direct/GuildMessageTyping` intents that fed it) — the listener
+      logged on **every** keystroke in every channel the bot can see,
+      which was the highest-volume noise source in the console.
+      _(this cycle)_
 - [ ] Make the `activeTickets.has(userId)` check in the "open ticket" button
       handler atomic. Today, two button clicks that arrive in quick succession
       can both pass the check before either creates a channel.
@@ -53,8 +58,8 @@ section.
       auto-detected channel names.
 - [ ] Add an ESLint config + `npm run lint` script. There is currently no
       lint or typecheck command in `package.json`.
-- [ ] Add a smoke test that loads the module without `DISCORD_TOKEN` and
-      asserts the documented error path (already happens manually each
-      maintenance cycle).
+- [x] Add a smoke test that loads the module without `DISCORD_TOKEN` and
+      asserts the documented error path (now `npm test`, runs three
+      cases — missing token, missing guild, missing staff-role). _(this cycle)_
 - [ ] Set up a `staging` branch + branch-protection so deployable commits can
       bake before reaching `main`.
